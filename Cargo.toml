@@ -1,0 +1,13 @@
+[package]
+name = "baiduyun_api"
+license = "MIT"
+authors = ["flyer <2350827470@qq.com>"]
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.11", features = ["blocking", "json","cookies"] }
+serde_json = "1.0.64"
+serde = "1.0.126"
