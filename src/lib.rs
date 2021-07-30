@@ -197,7 +197,7 @@ pub struct FilePtr {
 pub struct YunApi {
     access_token: String,
     client: blocking::Client,
-    pwd: String, //当前路径
+    //pwd: String, //当前路径
 }
 impl YunApi {
     ///创建一个YunApi结构体.
