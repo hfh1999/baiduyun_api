@@ -207,7 +207,7 @@ impl YunApi {
         YunApi {
             access_token: String::from(in_token),
             client: blocking::Client::new(),
-            pwd: String::from("/"),
+            //pwd: String::from("/"),
         }
     }
     fn get_addr(&self, in_node: YunNode, args: &str) -> String {
