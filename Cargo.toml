@@ -2,6 +2,7 @@
 name = "baiduyun_api"
 license = "MIT"
 authors = ["flyer <2350827470@qq.com>"]
+description = "baiduyun_api Rust Version"
 version = "0.1.0"
 edition = "2018"
 
