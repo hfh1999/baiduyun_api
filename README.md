@@ -1,4 +1,4 @@
-[![github](https://img.shields.io/badge/github-snowdreams1006-brightgreen.svg)](https://github.com/hfh1999/baiduyun_api/)
+[![github](https://img.shields.io/badge/baiduyun__api-crate-green)](https://github.com/hfh1999/baiduyun_api/)
 # 方便的使用官方Api
 
 提供了方便的Rust接口,及相关的实用设施
