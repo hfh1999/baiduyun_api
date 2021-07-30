@@ -3,8 +3,10 @@ name = "baiduyun_api"
 license = "MIT"
 authors = ["flyer <2350827470@qq.com>"]
 description = "baiduyun_api Rust Version"
-version = "0.1.0"
+version = "0.1.1"
+repository = "https://github.com/hfh1999/baiduyun_api"
 edition = "2018"
+keywords = ["baiduyun", "api"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
