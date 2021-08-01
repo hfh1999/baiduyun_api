@@ -14,7 +14,7 @@
 我的github仓库在 [这里](https://github.com/hfh1999/baiduyun_api) ，欢迎提出你的意见.
 
 # 文档
-请看[这个文档](https://docs.rs/baiduyun_api/0.1.0)，目前正在完善中
+请看[这个文档](https://docs.rs/baiduyun_api/0.2.0/baiduyun_api/)，目前正在完善中
 
 # 已经支持
 - [x] 提供基本的文件信息访问
