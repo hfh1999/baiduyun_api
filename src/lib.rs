@@ -1,13 +1,15 @@
 //! 这是一个rust写成的百度云api库, **不提供**作弊功能!
 //!
-//! 
-//!# 简介
+//!
+//!# 一,简介
 //!这个库提供方便地使用百度云官方api的方法
 //!
 //! 对用户的云盘进行访问前首先要获取access_token,具体请看官网的[这里](https://pan.baidu.com/union/document/entrance#%E6%8E%A5%E5%85%A5%E6%B5%81%E7%A8%8B)
 //!
 //!**注意:本库不提供作弊功能!!!**
-//!# 1.列出用户信息
+//!# 二,功能演示
+//!## 1.列出用户信息
+//!下面是示例如何列出用户信息:
 //!```
 //!use baiduyun_api::YunApi;
 //!//...
@@ -15,48 +17,101 @@
 //!//...
 //!let api = YunApi::new();
 //!let access_token ="User's access_token";
-//!let user_info = test.get_user_info().unwrap();
+//!let user_info = api.get_user_info().unwrap();
 //!    println!("baidu_name :{}", user_info.baidu_name);
 //!    println!("vip :{}", user_info.vip_type);
 //!```
+//!
+//!## 2.列出云盘信息
+//!列出云盘的存储空间信息的实例如下:
+//!```
+//!use baiduyun_api::YunApi;
+//!//...
+//!//--snip--
+//!//...
+//!let api = YunApi::new();
+//!let access_token ="User's access_token";
+//!let quota_info = api.get_quota_info().unwrap();
+//!println!("总空间 :{}", quota_info.total);
+//!println!("剩余空间 :{}", quota_info.free);
+//!```
+//!
+//!
+//!
+//!
+//!## 3.使用util设施
+//!我编写了一些基础设施帮助你开发自己的程序:
+//!```
+//!use baiduyun_api::YunApi;
+//!use baiduyun_api::util
+//!
+//!//...
+//!//--snip--
+//!//...
+//!let access_token ="User's access_token.";
+//!let api = YunApi::new(access_token);
+//!let mut my_fs = util::YunFs::new(&api);
+//!println!("current dir:====>{}",my_fs.pwd().unwrap());
+//!my_fs.chdir("../").unwrap();
+//!my_fs.chdir("/apps").unwrap();
+//!my_fs.chdir("../").unwrap();
+//!my_fs.chdir("/apps/").unwrap();
+//!my_fs.chdir("../").unwrap();
+//!my_fs.chdir("./apps/bypy/唱戏机").unwrap();
+//!let tmp_list = my_fs.ls().unwrap();
+//!for item in tmp_list{
+//!    println!("filename:{};filesize={}KB",item.server_filename,util::human_quota(item.size).0)
+//!}
+//!```
+//!结果为:  
+//!```
+//! current dir:====>/
+//! filename:45部高清黄梅戏mp4;filesize=0KB
+//! filename:黄梅戏视频;filesize=0KB
+//! filename:庐剧视频标清3;filesize=0KB
+//! filename:庐剧视频高清1;filesize=0KB
+//! filename:庐剧视频高清2;filesize=0KB
+//! filename:庐剧视频合集;filesize=0KB
+//! filename:相声小品大杂烩290部视频;filesize=0KB
+//!```
 
 use reqwest::blocking;
+use reqwest::header::USER_AGENT;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Display;
-use reqwest::header::USER_AGENT;    
 macro_rules! arg_to_string {
     ($item:expr) => {{
         trait PrintAsArg {
-            fn as_arg_str(&self) -> String{
-               String::new()
+            fn as_arg_str(&self) -> String {
+                String::new()
             }
         }
 
-        impl PrintAsArg for Vec<i64>{
-            fn as_arg_str(&self) -> String{
+        impl PrintAsArg for Vec<i64> {
+            fn as_arg_str(&self) -> String {
                 let mut tmp_string = String::new();
                 let len = self.len();
-                for (index,item) in self.iter().enumerate(){
+                for (index, item) in self.iter().enumerate() {
                     tmp_string.push_str(&(item.to_string()));
-                    if index != len - 1{
+                    if index != len - 1 {
                         tmp_string.push(',');
                     }
                 }
-                format!("[{}]",tmp_string)
+                format!("[{}]", tmp_string)
             }
-    }
-        impl PrintAsArg for i64{
-            fn as_arg_str(&self) -> String{
+        }
+        impl PrintAsArg for i64 {
+            fn as_arg_str(&self) -> String {
                 self.to_string()
             }
         }
-        impl PrintAsArg for &str{
-            fn as_arg_str(&self) -> String{
+        impl PrintAsArg for &str {
+            fn as_arg_str(&self) -> String {
                 self.to_string()
             }
         }
-        format!("{}={}",stringify!($item),$item.as_arg_str())
+        format!("{}={}", stringify!($item), $item.as_arg_str())
     }};
 }
 //用作参数构造的宏
@@ -66,13 +121,11 @@ macro_rules! args {
        $(
             tmp_string.push_str(&arg_to_string!($item));
             tmp_string.push_str(";");
-       ) 
+       )
        +
        tmp_string
     }};
 }
-///提供实用工具
-///
 pub mod util;
 #[derive(Debug)]
 /// 本api的专有错误类型
@@ -177,7 +230,7 @@ pub struct QuotaInfo {
 ///- size,文件大小,单位B,要想要方便的进行单位转换参看[这个函数](util::human_quota())
 ///- thumbs,只有请求参数带WEB且该条目分类为图片时，该KEY才存在，包含三个尺寸的缩略图URL
 ///- dir_empty,该目录是否存在子目录,只有请求参数带WEB且该条目为目录时,该KEY才存在,0为存在,1为不存在
-#[derive(Serialize, Deserialize,Debug)]
+#[derive(Serialize, Deserialize, Debug,Clone)]
 pub struct FilePtr {
     pub path: String,
     pub category: i64,
@@ -191,7 +244,7 @@ pub struct FilePtr {
     pub md5: Option<String>,
     pub size: i64,
     pub thumbs: Option<String>,
-    pub dir_empty:Option<i64>,
+    pub dir_empty: Option<i64>,
 }
 ///要使用本api,必须使用YunApi结构体
 pub struct YunApi {
@@ -211,29 +264,34 @@ impl YunApi {
         }
     }
     fn get_addr(&self, in_node: YunNode, args: &str) -> String {
-        let arg_vec: Vec<&str> = args.split(';').filter(|s| *s !="").collect();
+        let arg_vec: Vec<&str> = args.split(';').filter(|s| *s != "").collect();
         let node_addr = get_node_addr(in_node);
         if node_addr.contains('?') {
             let mut addr = format!("{}&access_token={}", node_addr, self.access_token);
             for item in arg_vec {
                 addr.push_str(&format!("{}{}", '&', item));
             }
-            println!("{}",addr);
+            //debug;;; println!("{}", addr);
             addr
         } else {
             let mut addr = format!("{}?access_token={}", node_addr, self.access_token);
             for item in arg_vec {
                 addr.push_str(&format!("{}{}", '&', item));
             }
-            println!("{}",addr);
+            println!("{}", addr);
             addr
         }
     }
     fn reqest(&self, in_node: YunNode, args: &str) -> Result<Value, ApiError> {
-        if let Ok(send_result) = self.client.get(self.get_addr(in_node, args)).header(USER_AGENT, "pan.baidu.com").send() {
+        if let Ok(send_result) = self
+            .client
+            .get(self.get_addr(in_node, args))
+            .header(USER_AGENT, "pan.baidu.com")
+            .send()
+        {
             if let Ok(text) = send_result.text() {
                 let tmp = Ok(serde_json::from_str(&text).unwrap());
-                println!("{:?}",tmp);
+                // debug;;;   println!("{:?}", tmp);
                 tmp
             } else {
                 return Err(ApiError::new("decode text error."));
@@ -283,7 +341,9 @@ impl YunApi {
         if start < 0 {
             return Err(ApiError::new("start arg error."));
         }
-        let value = self.reqest(YunNode::GetFileList, &args!(dir,start,limit)).unwrap();
+        let value = self
+            .reqest(YunNode::GetFileList, &args!(dir, start, limit))
+            .unwrap();
         if value["errno"].as_i64().unwrap() == 0 {
             let len = value["list"].as_array().unwrap().len();
             let mut file_vec = Vec::new();
@@ -306,29 +366,28 @@ impl YunApi {
     ///注意:
     ///- 传递的列表中只处理文件类型，而不处理目录类型
     ///- 得到的链接只存活8小时
-    pub fn get_files_dlink_vec(&self,files:Vec<FilePtr>)->Result<Vec<String>,ApiError>{
+    pub fn get_files_dlink_vec(&self, files: Vec<FilePtr>) -> Result<Vec<String>, ApiError> {
         //先构造参数
         let mut array_string = String::new();
         let len = files.len();
-        for (index,item) in files.iter().filter(|f| f.isdir == 0).enumerate(){
+        for (index, item) in files.iter().filter(|f| f.isdir == 0).enumerate() {
             array_string.push_str(&item.fs_id.to_string());
-            if index != len - 1{
+            if index != len - 1 {
                 array_string.push(',');
             }
         }
-        let args = format!("fsids=[{}];dlink=1",array_string);
+        let args = format!("fsids=[{}];dlink=1", array_string);
 
         let value = self.reqest(YunNode::GetFileInfo, &args).unwrap();
         if value["errno"].as_i64().unwrap() == 0 {
-            let mut dlink_vec:Vec<String> = Vec::new();
+            let mut dlink_vec: Vec<String> = Vec::new();
             let len = value["list"].as_array().unwrap().len();
-            for index in 0..len{
+            for index in 0..len {
                 let dlink = value["list"][index]["dlink"].as_str().unwrap().to_string();
                 dlink_vec.push(dlink);
             }
             Ok(dlink_vec)
-
-        }else{
+        } else {
             return Err(ApiError::new("Get file dlink error."));
         }
     }
