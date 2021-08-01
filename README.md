@@ -1,4 +1,12 @@
 [![github](https://img.shields.io/badge/baiduyun__api-crate-green)](https://github.com/hfh1999/baiduyun_api/)
+# 通告
+由于我的大失误,竟然在v0.1.0及v0.1.1中包含了调试信息,因此直接将这两个版本yank掉.
+
+主要更新有:
+- 版本直接变为0.2.0，更新了基础设施，提供了更加方便地YunFs功能;
+- 更新了文档.
+需要注意的是，目前的api并**不稳定**,计划到0.3.0达到稳定的api.
+
 # 方便的使用官方Api
 
 提供了方便的Rust接口,及相关的实用设施
