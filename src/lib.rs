@@ -40,7 +40,7 @@
 //!
 //!
 //!## 3.使用util设施
-//!我编写了一些基础设施帮助你开发自己的程序:
+//!我编写了一些基础设施帮助你开发自己的程序,先看看[YunFs](util::YunFs)如何使用:
 //!```
 //!use baiduyun_api::YunApi;
 //!use baiduyun_api::util
@@ -73,6 +73,45 @@
 //! filename:庐剧视频高清2;filesize=0KB
 //! filename:庐剧视频合集;filesize=0KB
 //! filename:相声小品大杂烩290部视频;filesize=0KB
+//!```
+//!再看看一个简陋的单线程下载设施[download](util::download):
+//!```
+//!fn download_test() {
+//!        let key =
+//!            "your_access_key_to_user.";
+//!        let api = YunApi::new(key);
+//!        let mut myfs = util::YunFs::new(&api);
+//!        println!("current dir ===> {}", myfs.pwd().unwrap());
+//!        myfs.chdir("学习资料/").unwrap();
+//!        println!("current dir ===> {}", myfs.pwd().unwrap());
+//!        let files = myfs.ls().unwrap();
+//!        let mut file_to_download: FilePtr = FilePtr::default();
+//!        for item in files {
+//!            if item.server_filename.contains("中文第六版@www.java1234.com.pdf") {
+//!                println!("pdf: -> {}; id ={} ", item.server_filename, item.fs_id);
+//!                file_to_download = item;
+//!            }
+//!        }
+//!        let link = api.get_file_dlink(file_to_download).unwrap();
+//!        util::download(&link, "D:/test.pdf", key, true);//这里打开了debug输出
+//!    }
+//!
+//!```
+//!结果如下:
+//!```
+//!current dir ===> /
+//!current dir ===> /学习资料
+//!pdf: -> 数据库系统概念_中文第六版@www.java1234.com.pdf; id =816997609436448
+//!recieve data total 20 MB
+//!recieve data total 40 MB
+//!recieve data total 60 MB
+//!recieve data total 80 MB
+//!recieve data total 100 MB
+//!recieve data total 120 MB
+//!recieve data total 140 MB
+//!recieve data total 160 MB
+//!recieve data total 161 MB
+//!finish download.
 //!```
 
 use reqwest::blocking;
@@ -230,7 +269,7 @@ pub struct QuotaInfo {
 ///- size,文件大小,单位B,要想要方便的进行单位转换参看[这个函数](util::human_quota())
 ///- thumbs,只有请求参数带WEB且该条目分类为图片时，该KEY才存在，包含三个尺寸的缩略图URL
 ///- dir_empty,该目录是否存在子目录,只有请求参数带WEB且该条目为目录时,该KEY才存在,0为存在,1为不存在
-#[derive(Serialize, Deserialize, Debug,Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FilePtr {
     pub path: String,
     pub category: i64,
@@ -388,7 +427,64 @@ impl YunApi {
             }
             Ok(dlink_vec)
         } else {
+            return Err(ApiError::new("Get files dlinks error."));
+        }
+    }
+    pub fn get_file_dlink(&self, file: FilePtr) -> Result<String, ApiError> {
+        let file_vec = vec![file];
+        if let Ok(mut link_vec) = self.get_files_dlink_vec(file_vec) {
+            //这里直接取出,无需复制
+            let link = std::mem::take(&mut link_vec[0]);
+            Ok(link)
+        } else {
             return Err(ApiError::new("Get file dlink error."));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_api() {
+        let key =
+            "123.64295f7207e0dcc4612276a7955e11f9.YaWhelqaKCPDHKxghpjx7shiRLRS44h1gcl4t7-.ckQMUQ";
+        let api = YunApi::new(key);
+        let list = api.get_file_list("/", 0, 10).unwrap();
+        assert!(list.len() == 10);
+        println!("list len = {}", list.len());
+    }
+
+    #[test]
+    #[should_panic]
+    fn error_key() {
+        let key = "++++123.64295f7207e0dcc4612276a7955e11f9.YaWhelqaKCPDHKxghpjx7shiRLRS44h1gcl4t7-.ckQMUQ";
+        let api = YunApi::new(key);
+        api.get_file_list("/", 0, 10).unwrap();
+    }
+
+    #[test]
+    fn download_test() {
+        let key =
+            "123.64295f7207e0dcc4612276a7955e11f9.YaWhelqaKCPDHKxghpjx7shiRLRS44h1gcl4t7-.ckQMUQ";
+        let api = YunApi::new(key);
+        let mut myfs = util::YunFs::new(&api);
+        println!("current dir ===> {}", myfs.pwd().unwrap());
+        myfs.chdir("学习资料/").unwrap();
+        println!("current dir ===> {}", myfs.pwd().unwrap());
+        let files = myfs.ls().unwrap();
+        let mut file_to_download: FilePtr = FilePtr::default();
+        for item in files {
+            if item
+                .server_filename
+                .contains("中文第六版@www.java1234.com.pdf")
+            {
+                println!("pdf: -> {}; id ={} ", item.server_filename, item.fs_id);
+                file_to_download = item;
+            }
+        }
+        let link = api.get_file_dlink(file_to_download).unwrap();
+        println!("{}", link);
+        util::download(&link, "D:/test.pdf", key, true);
     }
 }

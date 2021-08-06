@@ -59,7 +59,7 @@ impl<'a> YunFs<'a> {
             ))
         }
     }
-    fn check_dir_fmt(dir_str:&str)->Result<(),ApiError>{
+    fn check_dir_fmt(dir_str: &str) -> Result<(), ApiError> {
         // 以下这几种才是正确的目录形式
         // .[/]
         // ..[/]
@@ -108,7 +108,7 @@ impl<'a> YunFs<'a> {
                     }
                     _ => {}
                 }
-                if c_state == 1 || c_state == 2{
+                if c_state == 1 || c_state == 2 {
                     return Err(ApiError::new("`.` or `..`can not be here."));
                 }
                 c_state = states.4;
@@ -118,11 +118,12 @@ impl<'a> YunFs<'a> {
         return Ok(());
     }
     fn resolve_path(&self, dir_str: &str) -> Result<String, ApiError> {
-
         //先检查是否符合路径规范
         match Self::check_dir_fmt(dir_str) {
-            Ok(_)=>{},
-            Err(error)=>{return Err(error);}
+            Ok(_) => {}
+            Err(error) => {
+                return Err(error);
+            }
         }
 
         let mut tmp_dir = String::from(dir_str);
@@ -130,39 +131,36 @@ impl<'a> YunFs<'a> {
             return Ok(self.current_path.to_str().unwrap().into());
         }
 
-        if dir_str == ".." || dir_str == "../"{
-            if self.current_path.to_str().unwrap() == "/"{
+        if dir_str == ".." || dir_str == "../" {
+            if self.current_path.to_str().unwrap() == "/" {
                 //特殊情况,已经是系统的根了就不应该再往上找了.
-                return  Ok("/".into());
-            }
-            else {
+                return Ok("/".into());
+            } else {
                 let mut tmp_path = PathBuf::from(&self.current_path);
                 tmp_path.pop();
-                return  Ok(tmp_path.to_str().unwrap().into());
+                return Ok(tmp_path.to_str().unwrap().into());
             }
-
         }
 
         //去除可能有的最后的`/`
-        if tmp_dir.len()!= 1 && tmp_dir.ends_with("/") {
+        if tmp_dir.len() != 1 && tmp_dir.ends_with("/") {
             tmp_dir.pop();
         }
 
         // ../ 开头,父目录查找
         if tmp_dir.starts_with("../") {
             tmp_dir.remove(0);
-            tmp_dir.remove(0); 
-            tmp_dir.remove(0); 
+            tmp_dir.remove(0);
+            tmp_dir.remove(0);
 
-            if self.current_path.to_str().unwrap() == "/"{
+            if self.current_path.to_str().unwrap() == "/" {
                 //特殊情况,已经是系统的根了就不应该再往上找了.
-                let ret_string = format!("/{}",tmp_dir);
-                return  Ok(ret_string);
-            }
-            else {
+                let ret_string = format!("/{}", tmp_dir);
+                return Ok(ret_string);
+            } else {
                 let mut tmp_path = PathBuf::from(&self.current_path);
                 tmp_path.pop();
-                return  Ok(format!("{}/{}",tmp_path.to_str().unwrap(),tmp_dir));
+                return Ok(format!("{}/{}", tmp_path.to_str().unwrap(), tmp_dir));
             }
         }
         // 绝对目录查找
@@ -175,12 +173,13 @@ impl<'a> YunFs<'a> {
         if tmp_dir.starts_with("./") {
             tmp_dir.remove(0);
             tmp_dir.remove(0);
-        } 
-            if self.current_path.to_str().unwrap() == "/"{//要是不处理这种特殊情况会出现解析出来为 //dir1 的情况
-                return Ok(format!("/{}",tmp_dir));
-            }
-            let ret_string = format!("{}/{}", self.current_path.to_str().unwrap(), tmp_dir);
-            return Ok(ret_string);
+        }
+        if self.current_path.to_str().unwrap() == "/" {
+            //要是不处理这种特殊情况会出现解析出来为 //dir1 的情况
+            return Ok(format!("/{}", tmp_dir));
+        }
+        let ret_string = format!("{}/{}", self.current_path.to_str().unwrap(), tmp_dir);
+        return Ok(ret_string);
     }
     ///切换当前目录
     ///
@@ -213,20 +212,103 @@ impl<'a> YunFs<'a> {
     ///列出当前目录的所有文件
     ///
     ///这个函数一次网络请求最多得到1000个文件,如果超过1000则需要发起多次网络请求，速度就会变慢.
-    pub fn ls(&self)->Result<Vec<FilePtr>,ApiError>{
+    pub fn ls(&self) -> Result<Vec<FilePtr>, ApiError> {
         //将所有的文件都列出来
         let list_len = 1000;
-        let mut ret_vec:Vec<FilePtr> = vec![];
-        loop{
-            let tmp_list = match self.api.get_file_list(self.current_path.to_str().unwrap(), 0,list_len)  {
-                Ok(list)  =>  list,
-                Err(error) => {return Err(error);}
-            }; 
+        let mut ret_vec: Vec<FilePtr> = vec![];
+        loop {
+            let tmp_list =
+                match self
+                    .api
+                    .get_file_list(self.current_path.to_str().unwrap(), 0, list_len)
+                {
+                    Ok(list) => list,
+                    Err(error) => {
+                        return Err(error);
+                    }
+                };
             ret_vec.extend_from_slice(&tmp_list);
-            if tmp_list.len() < 1000{
+            if tmp_list.len() < 1000 {
                 break;
             }
         }
         Ok(ret_vec)
+    }
+}
+
+use reqwest::blocking::Client;
+use reqwest::header::CONTENT_LENGTH;
+use reqwest::header::RANGE;
+use reqwest::header::USER_AGENT;
+//use reqwest::header::CONTENT_RANGE;
+use std::fs::OpenOptions;
+use std::io::Write;
+
+///下载文件到指定的位置
+///
+///其中参数url,是你获取的下载链接,access_token是用户token,dst下载下来的文件在文件系统中的位置
+///如果is_debug:设为true则会有简单的调试信息类似下面这样:
+///
+///```
+///recieve data total 20 MB
+///recieve data total 40 MB
+///recieve data total 60 MB
+///recieve data total 80 MB
+///recieve data total 100 MB
+///recieve data total 120 MB
+///recieve data total 140 MB
+///recieve data total 160 MB
+///recieve data total 161 MB
+///finish download.
+///```
+pub fn download(url: &str, dst: &str, access_token: &str, is_debug: bool) {
+    let mut has_downloaded: i64 = 0;
+    const SIZE: i32 = 1024 * 1024 * 20; //每个range1MB大小,10MB
+    let downloader = Client::new();
+    let download_url = format!("{}&access_token={}", url, access_token);
+    let mut file_to_store = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .write(true)
+        .open(dst)
+        .unwrap();
+    let mut range_head = 0;
+    let mut range = format!("bytes={}-{}", range_head, range_head + SIZE - 1);
+    loop {
+        let requestbuild = downloader
+            .get(&download_url)
+            .header(USER_AGENT, "pan.baidu.com")
+            .header(RANGE, &range);
+        let response = requestbuild.send().unwrap();
+        let len_rev = response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        if is_debug {
+            has_downloaded += human_quota(len_rev as i64).1 as i64;
+            println!("recieve data total {} MB", has_downloaded);
+        }
+        file_to_store
+            .write_all(&(response.bytes().unwrap()))
+            .unwrap();
+        //println!("{}",content_range);
+        //不再需要再请求了
+        if len_rev < SIZE {
+            if is_debug {
+                println!("finish download.");
+            }
+            break;
+        } else {
+            //需要请求下一段
+
+            range_head = range_head + SIZE;
+            range = format!("bytes={}-{}", range_head, range_head + SIZE - 1);
+            //println!("{} ====> {}",range,len_rev);
+            //println!("contine get next!");
+        }
     }
 }
