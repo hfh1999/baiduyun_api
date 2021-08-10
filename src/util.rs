@@ -247,6 +247,7 @@ use std::io::Write;
 ///下载文件到指定的位置
 ///
 ///其中参数url,是你获取的下载链接,access_token是用户token,dst下载下来的文件在文件系统中的位置
+///block_size用于分段下载，若值为0则不进行分段,若值不为0则以MB为单位进行分段
 ///如果is_debug:设为true则会有简单的调试信息类似下面这样:
 ///
 ///```
@@ -261,9 +262,9 @@ use std::io::Write;
 ///recieve data total 161 MB
 ///finish download.
 ///```
-pub fn download(url: &str, dst: &str, access_token: &str, is_debug: bool) {
+pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_debug: bool) {
     let mut has_downloaded: i64 = 0;
-    const SIZE: i32 = 1024 * 1024 * 20; //每个range1MB大小,10MB
+    let size: i32 = 1024 * 1024 * block_size; //每个range1MB大小,100MB
     let downloader = Client::new();
     let download_url = format!("{}&access_token={}", url, access_token);
     let mut file_to_store = OpenOptions::new()
@@ -272,8 +273,19 @@ pub fn download(url: &str, dst: &str, access_token: &str, is_debug: bool) {
         .write(true)
         .open(dst)
         .unwrap();
+    if size == 0 {
+        let response = downloader
+            .get(&download_url)
+            .header(USER_AGENT, "pan.baidu.com")
+            .send()
+            .unwrap();
+        file_to_store
+            .write_all(&(response.bytes().unwrap()))
+            .unwrap();
+        return;
+    }
     let mut range_head = 0;
-    let mut range = format!("bytes={}-{}", range_head, range_head + SIZE - 1);
+    let mut range = format!("bytes={}-{}", range_head, range_head + size - 1);
     loop {
         let requestbuild = downloader
             .get(&download_url)
@@ -297,7 +309,7 @@ pub fn download(url: &str, dst: &str, access_token: &str, is_debug: bool) {
             .unwrap();
         //println!("{}",content_range);
         //不再需要再请求了
-        if len_rev < SIZE {
+        if len_rev < size {
             if is_debug {
                 println!("finish download.");
             }
@@ -305,8 +317,8 @@ pub fn download(url: &str, dst: &str, access_token: &str, is_debug: bool) {
         } else {
             //需要请求下一段
 
-            range_head = range_head + SIZE;
-            range = format!("bytes={}-{}", range_head, range_head + SIZE - 1);
+            range_head = range_head + size;
+            range = format!("bytes={}-{}", range_head, range_head + size - 1);
             //println!("{} ====> {}",range,len_rev);
             //println!("contine get next!");
         }
