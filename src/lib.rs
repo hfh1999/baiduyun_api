@@ -6,6 +6,14 @@
 //!
 //! 对用户的云盘进行访问前首先要获取access_token,具体请看官网的[这里](https://pan.baidu.com/union/document/entrance#%E6%8E%A5%E5%85%A5%E6%B5%81%E7%A8%8B)
 //!
+//! ⚠️好像最近这个页面无法看到获取access_token的具体方法了,下面简单说下过程:
+//! 在浏览器地址栏输入如下内容 其中"{你的API KEY}"替换成你的API Key
+//! ``` https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&client_id={你的API KEY}&redirect_uri=oob&scope=netdisk```
+//! 然后点击授权后,会跳转到另外的一个空白网页上,此时查看地址栏上的地址大概是这样的样子:
+//! ```http://openapi.baidu.com/oauth/2.0/login_success#expires_in=2592000&access_token={access_token}&session_secret={session_secret}&session_key={session_key}&scope=basic+netdisk```
+//! 其中access_token后面一段是我们需要的,保存下来即可
+//! 使用期限是30天,但如果这个access_token一直在使用的话 是不会过期的,可以放心使用
+//!
 //!**注意:本库不提供作弊功能!!!**
 //!# 二,功能演示
 //!## 1.列出用户信息
@@ -191,11 +199,12 @@ pub struct FilePtr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::read_to_string;
     #[test]
     fn test_api() {
-        let key =
-            "123.64295f7207e0dcc4612276a7955e11f9.YaWhelqaKCPDHKxghpjx7shiRLRS44h1gcl4t7-.ckQMUQ";
-        let api = YunApi::new(key);
+        // load key form file to prevent key to reveal.
+        let key = read_to_string("key.txt").unwrap();
+        let api = YunApi::new(&key);
         let list = api.get_file_list("/", 0, 10).unwrap();
         assert!(list.len() == 10);
         println!("list len = {}", list.len());
