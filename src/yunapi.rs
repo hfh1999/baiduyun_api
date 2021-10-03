@@ -122,10 +122,10 @@ impl YunApi {
                 // debug;;;   println!("{:?}", tmp);
                 tmp
             } else {
-                return Err(ApiError::new("decode text error."));
+                return Err(ApiError::new(8989, "decode text error."));
             }
         } else {
-            return Err(ApiError::new("send request error."));
+            return Err(ApiError::new(8989, "send request error."));
         }
     }
     ///得到用户的基本信息
@@ -133,10 +133,11 @@ impl YunApi {
     ///返回信息的具体字段参见[UserInfo]
     pub fn get_user_info(&self) -> Result<UserInfo, ApiError> {
         let value = self.reqest(YunNode::GetUserInfo, "").unwrap();
-        if value["errno"].as_i64().unwrap() == 0 {
+        let error = value["errno"].as_i64().unwrap();
+        if error == 0 {
             return Ok(serde_json::from_value(value).unwrap());
         } else {
-            return Err(ApiError::new("Get User infomation error."));
+            return Err(ApiError::new(error, "Get User infomation error."));
         }
     }
 
@@ -145,10 +146,11 @@ impl YunApi {
     ///返回信息的具体的字段见[QuotaInfo]
     pub fn get_quota_info(&self) -> Result<QuotaInfo, ApiError> {
         let value = self.reqest(YunNode::GetQuotaInfo, "").unwrap();
-        if value["errno"].as_i64().unwrap() == 0 {
+        let error = value["errno"].as_i64().unwrap();
+        if error == 0 {
             return Ok(serde_json::from_value(value).unwrap());
         } else {
-            return Err(ApiError::new("Get quta infomation error."));
+            return Err(ApiError::new(error, "Get quta infomation error."));
         }
     }
 
@@ -164,15 +166,16 @@ impl YunApi {
         limit: i64,
     ) -> Result<Vec<FilePtr>, ApiError> {
         if limit < 0 || limit > 10000 {
-            return Err(ApiError::new("limit arg error."));
+            return Err(ApiError::new(8989, "limit arg error."));
         }
         if start < 0 {
-            return Err(ApiError::new("start arg error."));
+            return Err(ApiError::new(8989, "start arg error."));
         }
         let value = self
             .reqest(YunNode::GetFileList, &args!(dir, start, limit))
             .unwrap();
-        if value["errno"].as_i64().unwrap() == 0 {
+        let errno = value["errno"].as_i64().unwrap();
+        if errno == 0 {
             let len = value["list"].as_array().unwrap().len();
             let mut file_vec = Vec::new();
             for index in 0..len {
@@ -182,7 +185,7 @@ impl YunApi {
             }
             return Ok(file_vec);
         } else {
-            return Err(ApiError::new("Get files list error."));
+            return Err(ApiError::new(errno, "Get files list error."));
         }
     }
 
@@ -207,7 +210,8 @@ impl YunApi {
         let args = format!("fsids=[{}];dlink=1", array_string);
 
         let value = self.reqest(YunNode::GetFileInfo, &args).unwrap();
-        if value["errno"].as_i64().unwrap() == 0 {
+        let errno = value["errno"].as_i64().unwrap();
+        if errno == 0 {
             let mut dlink_vec: Vec<String> = Vec::new();
             let len = value["list"].as_array().unwrap().len();
             for index in 0..len {
@@ -216,17 +220,18 @@ impl YunApi {
             }
             Ok(dlink_vec)
         } else {
-            return Err(ApiError::new("Get files dlinks error."));
+            return Err(ApiError::new(errno, "Get files dlinks error."));
         }
     }
     pub fn get_file_dlink(&self, file: FilePtr) -> Result<String, ApiError> {
         let file_vec = vec![file];
-        if let Ok(mut link_vec) = self.get_files_dlink_vec(file_vec) {
-            //这里直接取出,无需复制
-            let link = std::mem::take(&mut link_vec[0]);
-            Ok(link)
-        } else {
-            return Err(ApiError::new("Get file dlink error."));
+        match self.get_files_dlink_vec(file_vec) {
+            Ok(mut link_vec) => {
+                //这里直接取出,无需复制
+                let link = std::mem::take(&mut link_vec[0]);
+                Ok(link)
+            }
+            Err(error) => Err(ApiError::new(error.ret_errno(), "Get file dlink error.")),
         }
     }
 }

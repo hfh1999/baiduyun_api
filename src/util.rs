@@ -10,6 +10,25 @@ use super::ApiError;
 use super::FilePtr;
 use super::YunApi;
 use std::path::PathBuf;
+
+use std::fmt::Display;
+#[derive(Debug)]
+pub struct UtilError {
+    prompt: String,
+}
+impl UtilError {
+    fn new(prompt: &str) -> UtilError {
+        UtilError {
+            prompt: String::from(prompt),
+        }
+    }
+}
+
+impl Display for UtilError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.prompt)
+    }
+}
 /// 提供方便的容量大小转换
 ///
 ///返回是一个元组,从左往右依次是转换为KB,MB,GB的值,用浮点数表示
@@ -19,6 +38,18 @@ pub fn human_quota(in_quta: i64) -> (f64, f64, f64) {
     let m = (1024 * 1024) as f64;
     let g = (1024 * 1024 * 1024) as f64;
     (tmp_quota / k, tmp_quota / m, tmp_quota / g)
+}
+
+/// 若输入一个有效的vip类型数字,返回一个相应的中文描述字符串
+///
+/// 会员类型，0普通用户、1普通会员、2超级会员
+pub fn get_vip_type_str(vip_type: i64) -> Result<String, UtilError> {
+    match vip_type {
+        0 => Ok(String::from("普通用户")),
+        1 => Ok(String::from("普通会员")),
+        2 => Ok(String::from("超级会员")),
+        _ => Err(UtilError::new("Not Support vip_type.")),
+    }
 }
 
 ///提供方便的云目录结构,方便进行各种目录切换操作
@@ -49,17 +80,17 @@ impl<'a> YunFs<'a> {
     ///
     ///注意:每次都检查当前目录是否存在
     ///
-    pub fn pwd(&self) -> Result<String, ApiError> {
+    pub fn pwd(&self) -> Result<String, UtilError> {
         let path_string: String = self.current_path.to_str().unwrap().into();
         if let Ok(_) = self.api.get_file_list(&path_string, 0, 0) {
             Ok(path_string.clone())
         } else {
-            Err(ApiError::new(
+            Err(UtilError::new(
                 "Error when pwd():the directory may not exist.",
             ))
         }
     }
-    fn check_dir_fmt(dir_str: &str) -> Result<(), ApiError> {
+    fn check_dir_fmt(dir_str: &str) -> Result<(), UtilError> {
         // 以下这几种才是正确的目录形式
         // .[/]
         // ..[/]
@@ -83,7 +114,7 @@ impl<'a> YunFs<'a> {
                     continue;
                 } else {
                     //error.
-                    return Err(ApiError::new(
+                    return Err(UtilError::new(
                         "path resolve Error: `.` not the correct position.",
                     ));
                 }
@@ -94,7 +125,7 @@ impl<'a> YunFs<'a> {
                     continue;
                 } else {
                     //error.
-                    return Err(ApiError::new(
+                    return Err(UtilError::new(
                         "path resolve Error: `/` not the correct position.",
                     ));
                 }
@@ -102,14 +133,14 @@ impl<'a> YunFs<'a> {
                 //剩下的应该都是普通字符,特殊字符则报错
                 match item {
                     '\\' => {
-                        return Err(ApiError::new(
+                        return Err(UtilError::new(
                             "path resolve Error: `\\` not the accepted char.",
                         ))
                     }
                     _ => {}
                 }
                 if c_state == 1 || c_state == 2 {
-                    return Err(ApiError::new("`.` or `..`can not be here."));
+                    return Err(UtilError::new("`.` or `..`can not be here."));
                 }
                 c_state = states.4;
                 continue;
@@ -117,7 +148,7 @@ impl<'a> YunFs<'a> {
         }
         return Ok(());
     }
-    fn resolve_path(&self, dir_str: &str) -> Result<String, ApiError> {
+    fn resolve_path(&self, dir_str: &str) -> Result<String, UtilError> {
         //先检查是否符合路径规范
         match Self::check_dir_fmt(dir_str) {
             Ok(_) => {}
@@ -192,7 +223,7 @@ impl<'a> YunFs<'a> {
     ///- "../dir1/dir2[/]"
     ///- "/dir1/dir2/dir3[/]"
     ///- "dir1/dir2/dir3[/]"
-    pub fn chdir(&mut self, dir_str: &str) -> Result<(), ApiError> {
+    pub fn chdir(&mut self, dir_str: &str) -> Result<(), UtilError> {
         //每一次目录变动都需要进行一次在线检查,检查失败则操作失败
         let resolved_result = self.resolve_path(dir_str);
         let dir_resolved = match resolved_result {
@@ -205,7 +236,7 @@ impl<'a> YunFs<'a> {
             self.current_path = PathBuf::from(dir_resolved);
             Ok(())
         } else {
-            Err(ApiError::new("Error:chdir():the directory may not exist."))
+            Err(UtilError::new("Error:chdir():the directory may not exist."))
         }
     }
 

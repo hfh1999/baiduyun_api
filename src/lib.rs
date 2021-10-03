@@ -240,6 +240,6 @@ mod tests {
         }
         let link = api.get_file_dlink(file_to_download).unwrap();
         println!("{}", link);
-        util::download(&link, "D:/test.pdf",100, key, true);
+        util::download(&link, "D:/test.pdf", 100, key, true);
     }
 }
