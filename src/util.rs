@@ -7,7 +7,8 @@
 //!- 目录结构之设施: [YunFs](YunFs) ,提供云端文件系统的抽象.
 
 use super::ApiError;
-use super::FilePtr;
+use super::FileInfo;
+use super::FileInfoIter;
 use super::YunApi;
 use std::path::PathBuf;
 
@@ -82,7 +83,7 @@ impl<'a> YunFs<'a> {
     ///
     pub fn pwd(&self) -> Result<String, UtilError> {
         let path_string: String = self.current_path.to_str().unwrap().into();
-        if let Ok(_) = self.api.get_file_list(&path_string, 0, 0) {
+        if let Ok(_) = self.api.get_files_list(&path_string, 0, 0) {
             Ok(path_string.clone())
         } else {
             Err(UtilError::new(
@@ -231,7 +232,7 @@ impl<'a> YunFs<'a> {
             Err(error) => return Err(error),
         };
         //debug;;; println!("resolved:path {}",dir_resolved);
-        if let Ok(_) = self.api.get_file_list(&dir_resolved, 0, 0) {
+        if let Ok(_) = self.api.get_files_list(&dir_resolved, 0, 0) {
             //将本地表示也改变为目录切换后的版本
             self.current_path = PathBuf::from(dir_resolved);
             Ok(())
@@ -243,27 +244,29 @@ impl<'a> YunFs<'a> {
     ///列出当前目录的所有文件
     ///
     ///这个函数一次网络请求最多得到1000个文件,如果超过1000则需要发起多次网络请求，速度就会变慢.
-    pub fn ls(&self) -> Result<Vec<FilePtr>, ApiError> {
+    pub fn ls(&self) -> Result<FileInfoIter, ApiError> {
         //将所有的文件都列出来
         let list_len = 1000;
-        let mut ret_vec: Vec<FilePtr> = vec![];
+        let mut ret_vec: Vec<FileInfo> = Vec::new();
         loop {
             let tmp_list =
                 match self
                     .api
-                    .get_file_list(self.current_path.to_str().unwrap(), 0, list_len)
+                    .get_files_list(self.current_path.to_str().unwrap(), 0, list_len)
                 {
                     Ok(list) => list,
                     Err(error) => {
                         return Err(error);
                     }
                 };
-            ret_vec.extend_from_slice(&tmp_list);
-            if tmp_list.len() < 1000 {
+            let mut tmp_vec: Vec<FileInfo> = tmp_list.collect();
+            let len = tmp_vec.len();
+            ret_vec.append(&mut tmp_vec);
+            if len < 1000 {
                 break;
             }
         }
-        Ok(ret_vec)
+        Ok(FileInfoIter::new(ret_vec))
     }
 }
 

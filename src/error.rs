@@ -19,7 +19,7 @@ impl ApiError {
     pub fn new(errno: i64, custom_info: &str) -> ApiError {
         let errno_str: String = match errno {
             2 => String::from("argument error,Please check your argument."),
-            -6 => String::from("Authentication failed,Please check your access tojken."),
+            -6 => String::from("Authentication failed,Please check your access token."),
             31034 => String::from("Hit interface frequency control."),
             42000 => String::from("Your try is too often,Please wait for a moment."),
             42001 => String::from("Rand verification failed"),

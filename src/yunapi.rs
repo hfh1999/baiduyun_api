@@ -1,6 +1,9 @@
 use super::error::ApiError;
-use super::FilePtr;
+use super::FileInfo;
+use super::FileInfoEx;
+use super::FileInfoIter;
 use super::QuotaInfo;
+use super::SearchResult;
 use super::UserInfo;
 use reqwest::blocking;
 use reqwest::header::USER_AGENT;
@@ -56,6 +59,10 @@ enum YunNode {
     GetQuotaInfo,
     GetFileList,
     GetFileInfo,
+    Search,
+    PreCreate, // 三步上传,1st
+    UpLoad,    //2ed
+    Create,    //3rd
 }
 
 ///要使用本api,必须使用YunApi结构体
@@ -78,6 +85,14 @@ fn get_node_addr(in_node: YunNode) -> String {
         YunNode::GetFileInfo => {
             String::from("http://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas")
         }
+        YunNode::Search => String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=search"),
+        YunNode::PreCreate => {
+            String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=precreate")
+        }
+        YunNode::UpLoad => {
+            String::from("https://d.pcs.baidu.com/rest/2.0/pcs/superfile2?method=upload")
+        }
+        YunNode::Create => String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=create"),
     }
 }
 impl YunApi {
@@ -154,17 +169,54 @@ impl YunApi {
         }
     }
 
-    ///根据目录名得到该目录下的文件列表
+    ///查询文件信息,可以获取下载链接之用.
+    ///
+    /// 查询结果 [FileInfoEx] 其各个字段详见其描述.
+    pub fn get_files_info(&self, file_ids: &[FileInfo]) -> Result<Vec<FileInfoEx>, ApiError> {
+        let dlink = 1_i64;
+        let extra = 1_i64;
+        let fsids: Vec<i64> = file_ids.iter().map(|x| x.fs_id).collect();
+        let value = self
+            .reqest(YunNode::GetFileInfo, &args!(fsids, dlink, extra))
+            .unwrap();
+        let errno = value["errno"].as_i64().unwrap();
+        if errno == 0 {
+            let len = value["list"].as_array().unwrap().len();
+            let mut info_vec = Vec::new();
+            for index in 0..len {
+                // 这里忽略了thumb的解析.
+                let file_info: FileInfoEx = FileInfoEx {
+                    category: value["list"][index]["category"].as_i64().unwrap(),
+                    date_taken: value["list"][index]["date_taken"].as_i64().unwrap(),
+                    dlink: value["list"][index]["dlink"].as_str().unwrap().to_string(),
+                    file_name: value["list"][index]["file_name"].as_str().unwrap().to_string(),
+                    height: value["list"][index]["height"].as_i64().unwrap(),
+                    is_dir: value["list"][index]["is_dir"].as_i64().unwrap(),
+                    server_ctime: value["list"][index]["server_ctime"].as_i64().unwrap(),
+                    server_mtime: value["list"][index]["server_mtime"].as_i64().unwrap(),
+                    size: value["list"][index]["size"].as_i64().unwrap(),
+                    width: value["list"][index]["width"].as_i64().unwrap(),
+                };
+                info_vec.push(file_info);
+            }
+            return Ok(info_vec);
+        } else {
+            return Err(ApiError::new(errno, "Get files info error."));
+        }
+    }
+
+    ///根据目录名得到该目录下的文件
     ///
     ///其中参数dir表示目录名,limit表示每次最多的条数(即每页limit个条目),start表示当前查询的总序号.
     ///limit不可超过10000
     ///返回信息的具体的字段见[FilePtr]
-    pub fn get_file_list(
+    /// [FileInfoIter] 是一个FileInfo的迭代器.
+    pub fn get_files_list(
         &self,
         dir: &str,
         start: i64,
         limit: i64,
-    ) -> Result<Vec<FilePtr>, ApiError> {
+    ) -> Result<FileInfoIter, ApiError> {
         if limit < 0 || limit > 10000 {
             return Err(ApiError::new(8989, "limit arg error."));
         }
@@ -179,11 +231,11 @@ impl YunApi {
             let len = value["list"].as_array().unwrap().len();
             let mut file_vec = Vec::new();
             for index in 0..len {
-                let file_info: FilePtr =
+                let file_info: FileInfo =
                     serde_json::from_value(value["list"][index].clone()).unwrap();
                 file_vec.push(file_info);
             }
-            return Ok(file_vec);
+            return Ok(FileInfoIter::new(file_vec));
         } else {
             return Err(ApiError::new(errno, "Get files list error."));
         }
@@ -197,19 +249,14 @@ impl YunApi {
     ///注意:
     ///- 传递的列表中只处理文件类型，而不处理目录类型
     ///- 得到的链接只存活8小时
-    pub fn get_files_dlink_vec(&self, files: Vec<FilePtr>) -> Result<Vec<String>, ApiError> {
+    pub fn get_files_dlink_vec(&self, files: &[FileInfo]) -> Result<Vec<String>, ApiError> {
         //先构造参数
-        let mut array_string = String::new();
-        let len = files.len();
-        for (index, item) in files.iter().filter(|f| f.isdir == 0).enumerate() {
-            array_string.push_str(&item.fs_id.to_string());
-            if index != len - 1 {
-                array_string.push(',');
-            }
-        }
-        let args = format!("fsids=[{}];dlink=1", array_string);
+        let fsids: Vec<i64> = files.iter().map(|x| x.fs_id).collect();
+        let dlink = 1_i64;
 
-        let value = self.reqest(YunNode::GetFileInfo, &args).unwrap();
+        let value = self
+            .reqest(YunNode::GetFileInfo, &args!(fsids, dlink))
+            .unwrap();
         let errno = value["errno"].as_i64().unwrap();
         if errno == 0 {
             let mut dlink_vec: Vec<String> = Vec::new();
@@ -223,15 +270,64 @@ impl YunApi {
             return Err(ApiError::new(errno, "Get files dlinks error."));
         }
     }
-    pub fn get_file_dlink(&self, file: FilePtr) -> Result<String, ApiError> {
+
+    /// 和 [get_files_dlink_vec]类似,但是只查询单个文件
+    pub fn get_file_dlink(&self, file: FileInfo) -> Result<String, ApiError> {
         let file_vec = vec![file];
-        match self.get_files_dlink_vec(file_vec) {
+        match self.get_files_dlink_vec(&file_vec) {
             Ok(mut link_vec) => {
                 //这里直接取出,无需复制
                 let link = std::mem::take(&mut link_vec[0]);
                 Ok(link)
             }
             Err(error) => Err(ApiError::new(error.ret_errno(), "Get file dlink error.")),
+        }
+    }
+
+    /// 根据关键字进行搜索
+    /// 
+    ///-  search_key 表示要搜索的关键字,可以使用中文.
+    ///-  search_dir 表示要搜索的根目录.
+    ///- is_recursive 表示是否递归地进行搜索.
+    ///- in_num 表示每页的项目.
+    ///- in_page表示当前搜索的页号.
+    ///- in_web 表示是否返回缩略图
+    pub fn search_with_key(
+        &self,
+        search_key: &str,
+        search_dir: &str,
+        is_recursive: bool,
+        in_page: i64,
+        in_num: i64,
+        in_web: bool,
+    ) -> Result<Vec<SearchResult>, ApiError> {
+        let key = search_key;
+        let dir = search_dir;
+        let recursion = is_recursive as i64;
+        let page = in_page;
+        let num = in_num;
+        let web = in_web as i64;
+        if page < 1 {
+            return Err(ApiError::new(8989, "Page is less than 1."));
+        }
+        if num > 1000 {
+            return Err(ApiError::new(8989, "Num is more than 1000."));
+        }
+        let value = self
+            .reqest(YunNode::Search, &args!(key, dir, recursion, page, num, web))
+            .unwrap();
+        let errno = value["errno"].as_i64().unwrap();
+        if errno == 0 {
+            let len = value["list"].as_array().unwrap().len();
+            let mut search_vec = Vec::new();
+            for index in 0..len {
+                let file_info: SearchResult =
+                    serde_json::from_value(value["list"][index].clone()).unwrap();
+                search_vec.push(file_info);
+            }
+            return Ok(search_vec);
+        } else {
+            return Err(ApiError::new(errno, "Get files info error."));
         }
     }
 }

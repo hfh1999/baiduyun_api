@@ -6,13 +6,21 @@
 //!
 //! 对用户的云盘进行访问前首先要获取access_token,具体请看官网的[这里](https://pan.baidu.com/union/document/entrance#%E6%8E%A5%E5%85%A5%E6%B5%81%E7%A8%8B)
 //!
-//! ⚠️好像最近这个页面无法看到获取access_token的具体方法了,下面简单说下过程:
-//! 在浏览器地址栏输入如下内容 其中"{你的API KEY}"替换成你的API Key
-//! ``` https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&client_id={你的API KEY}&redirect_uri=oob&scope=netdisk```
+//! ⚠️access_token获取的方法的简要描述:
+//! 
+//! 最开始你登录百度账号并且创建一个云盘app,获取它的APP_key
+//! 
+//! 在浏览器地址栏输入如下内容 其中"你的APP KEY"替换成你的APP Key
+//! 
+//! ``` https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&client_id=你的APP KEY&redirect_uri=oob&scope=netdisk```
+//! 
 //! 然后点击授权后,会跳转到另外的一个空白网页上,此时查看地址栏上的地址大概是这样的样子:
+//! 
 //! ```http://openapi.baidu.com/oauth/2.0/login_success#expires_in=2592000&access_token={access_token}&session_secret={session_secret}&session_key={session_key}&scope=basic+netdisk```
+//! 
 //! 其中access_token后面一段是我们需要的,保存下来即可
-//! 使用期限是30天,但如果这个access_token一直在使用的话 是不会过期的,可以放心使用
+//! 
+//! 使用期限是30天,但如果这个access_token一直在使用的话 是不会过期的,过期需要重新查询.
 //!
 //!**注意:本库不提供作弊功能!!!**
 //!# 二,功能演示
@@ -180,7 +188,7 @@ pub struct QuotaInfo {
 ///- thumbs,只有请求参数带WEB且该条目分类为图片时，该KEY才存在，包含三个尺寸的缩略图URL
 ///- dir_empty,该目录是否存在子目录,只有请求参数带WEB且该条目为目录时,该KEY才存在,0为存在,1为不存在
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct FilePtr {
+pub struct FileInfo {
     pub path: String,
     pub category: i64,
     pub fs_id: i64,
@@ -196,6 +204,76 @@ pub struct FilePtr {
     pub dir_empty: Option<i64>,
 }
 
+///拓展的文件信息结构体,由get_file_info返回.
+///
+///包含了以下字段：
+///- category,文件类型:1 视频、2 音频、3 图片、4 文档、5 应用、6 其他、7 种子
+///- dlink,文件的下载链接.
+///- file_name,文件名.
+///- isdir,是否目录，0 文件、1 目录
+///- server_ctime,文件在服务器创建时间
+///- server_mtime,文件在服务器修改时间
+///- size,文件大小,单位B,要想要方便的进行单位转换参看[这个函数](util::human_quota())
+/// 下面几个是文件类型为图片才有效:
+///- height 图片高度.
+///- width 图片宽度.
+///- date_taken 图片的拍摄时间.
+pub struct FileInfoEx {
+    pub category: i64,
+    pub dlink: String,
+    pub file_name: String,
+    pub is_dir: i64,
+    pub server_ctime: i64,
+    pub server_mtime: i64,
+    pub size: i64,
+    //pub thumbs:
+    pub height: i64,
+    pub width: i64,
+    pub date_taken: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct SearchResult {
+    pub category: i64,
+    pub fs_id: i64,
+    pub isdir: i64,
+    pub local_ctime: i64,
+    pub local_mtime: i64,
+    pub server_ctime: i64,
+    pub server_mtime: i64,
+    pub md5: Option<String>,
+    pub size: i64,
+    pub thumbs: Option<String>,
+}
+
+/// [FileInfo] 的迭代器,可被clone.
+#[derive(Clone)]
+pub struct FileInfoIter {
+    inner_data: Vec<FileInfo>,
+    inner_count: usize,
+}
+impl FileInfoIter {
+    /// 从Vec创建一个迭代器.
+    pub fn new(in_vec: Vec<FileInfo>) -> FileInfoIter {
+        FileInfoIter {
+            inner_data: in_vec,
+            inner_count: 0,
+        }
+    }
+}
+
+impl Iterator for FileInfoIter {
+    type Item = FileInfo;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.inner_count >= self.inner_data.len() {
+            return None;
+        } else {
+            let tmp = Some((&self).inner_data[self.inner_count].clone());
+            self.inner_count += 1;
+            return tmp;
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,11 +281,12 @@ mod tests {
     #[test]
     fn test_api() {
         // load key form file to prevent key to reveal.
-        let key = read_to_string("key.txt").unwrap();
+        let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
         let api = YunApi::new(&key);
-        let list = api.get_file_list("/", 0, 10).unwrap();
-        assert!(list.len() == 10);
-        println!("list len = {}", list.len());
+        let list = api.get_files_list("/", 0, 10).unwrap();
+        let list_vec: Vec<FileInfo> = list.collect();
+        assert!(list_vec.len() == 10);
+        println!("list len = {}", list_vec.len());
     }
 
     #[test]
@@ -215,20 +294,30 @@ mod tests {
     fn error_key() {
         let key = "++++123.64295f7207e0dcc4612276a7955e11f9.YaWhelqaKCPDHKxghpjx7shiRLRS44h1gcl4t7-.ckQMUQ";
         let api = YunApi::new(key);
-        api.get_file_list("/", 0, 10).unwrap();
+        api.get_files_list("/", 0, 10).unwrap();
+    }
+
+    #[test]
+    fn test_search(){
+        let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
+        let api = YunApi::new(&key);
+        let r = api.search_with_key("唱戏机", "/", true, 1, 100, false).unwrap();
+        for item in r {
+            println!("item = {}",item.fs_id);
+        }
+
     }
 
     #[test]
     fn download_test() {
-        let key =
-            "123.64295f7207e0dcc4612276a7955e11f9.YaWhelqaKCPDHKxghpjx7shiRLRS44h1gcl4t7-.ckQMUQ";
-        let api = YunApi::new(key);
+        let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
+        let api = YunApi::new(&key);
         let mut myfs = util::YunFs::new(&api);
         println!("current dir ===> {}", myfs.pwd().unwrap());
         myfs.chdir("学习资料/").unwrap();
         println!("current dir ===> {}", myfs.pwd().unwrap());
         let files = myfs.ls().unwrap();
-        let mut file_to_download: FilePtr = FilePtr::default();
+        let mut file_to_download: FileInfo = FileInfo::default();
         for item in files {
             if item
                 .server_filename
@@ -240,6 +329,6 @@ mod tests {
         }
         let link = api.get_file_dlink(file_to_download).unwrap();
         println!("{}", link);
-        util::download(&link, "D:/test.pdf", 100, key, true);
+        util::download(&link, "D:/test.pdf", 100, &key, true);
     }
 }
