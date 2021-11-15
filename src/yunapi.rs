@@ -1,4 +1,5 @@
 use super::error::ApiError;
+use super::FileId;
 use super::FileInfo;
 use super::FileInfoEx;
 use super::FileInfoIter;
@@ -171,11 +172,15 @@ impl YunApi {
 
     ///查询文件信息,可以获取下载链接之用.
     ///
+    /// 只有实现了[FileId] trait的类型可以用在这里
     /// 查询结果 [FileInfoEx] 其各个字段详见其描述.
-    pub fn get_files_info(&self, file_ids: &[FileInfo]) -> Result<Vec<FileInfoEx>, ApiError> {
+    pub fn get_files_info<T>(&self, file_ids: &[T]) -> Result<Vec<FileInfoEx>, ApiError>
+    where
+        T: FileId,
+    {
         let dlink = 1_i64;
         let extra = 1_i64;
-        let fsids: Vec<i64> = file_ids.iter().map(|x| x.fs_id).collect();
+        let fsids: Vec<i64> = file_ids.iter().map(|x| x.ret_file_id()).collect();
         let value = self
             .reqest(YunNode::GetFileInfo, &args!(fsids, dlink, extra))
             .unwrap();
@@ -189,7 +194,10 @@ impl YunApi {
                     category: value["list"][index]["category"].as_i64().unwrap(),
                     date_taken: value["list"][index]["date_taken"].as_i64().unwrap(),
                     dlink: value["list"][index]["dlink"].as_str().unwrap().to_string(),
-                    file_name: value["list"][index]["file_name"].as_str().unwrap().to_string(),
+                    file_name: value["list"][index]["file_name"]
+                        .as_str()
+                        .unwrap()
+                        .to_string(),
                     height: value["list"][index]["height"].as_i64().unwrap(),
                     is_dir: value["list"][index]["is_dir"].as_i64().unwrap(),
                     server_ctime: value["list"][index]["server_ctime"].as_i64().unwrap(),
@@ -246,12 +254,16 @@ impl YunApi {
 
     ///根据提供的文件列表返回相应的下载链接
     ///
+    /// 只有实现了[FileId] trait的类型可以用在这里
     ///注意:
     ///- 传递的列表中只处理文件类型，而不处理目录类型
     ///- 得到的链接只存活8小时
-    pub fn get_files_dlink_vec(&self, files: &[FileInfo]) -> Result<Vec<String>, ApiError> {
+    pub fn get_files_dlink_vec<T>(&self, files: &[T]) -> Result<Vec<String>, ApiError>
+    where
+        T: FileId,
+    {
         //先构造参数
-        let fsids: Vec<i64> = files.iter().map(|x| x.fs_id).collect();
+        let fsids: Vec<i64> = files.iter().map(|x| x.ret_file_id()).collect();
         let dlink = 1_i64;
 
         let value = self
@@ -272,7 +284,12 @@ impl YunApi {
     }
 
     /// 和 [get_files_dlink_vec]类似,但是只查询单个文件
-    pub fn get_file_dlink(&self, file: FileInfo) -> Result<String, ApiError> {
+    ///
+    /// 只有实现了[FileId] trait的类型可以用在这里
+    pub fn get_file_dlink<T>(&self, file: T) -> Result<String, ApiError>
+    where
+        T: FileId,
+    {
         let file_vec = vec![file];
         match self.get_files_dlink_vec(&file_vec) {
             Ok(mut link_vec) => {
@@ -285,7 +302,7 @@ impl YunApi {
     }
 
     /// 根据关键字进行搜索
-    /// 
+    ///
     ///-  search_key 表示要搜索的关键字,可以使用中文.
     ///-  search_dir 表示要搜索的根目录.
     ///- is_recursive 表示是否递归地进行搜索.

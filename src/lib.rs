@@ -7,19 +7,19 @@
 //! 对用户的云盘进行访问前首先要获取access_token,具体请看官网的[这里](https://pan.baidu.com/union/document/entrance#%E6%8E%A5%E5%85%A5%E6%B5%81%E7%A8%8B)
 //!
 //! ⚠️access_token获取的方法的简要描述:
-//! 
+//!
 //! 最开始你登录百度账号并且创建一个云盘app,获取它的APP_key
-//! 
+//!
 //! 在浏览器地址栏输入如下内容 其中"你的APP KEY"替换成你的APP Key
-//! 
+//!
 //! ``` https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&client_id=你的APP KEY&redirect_uri=oob&scope=netdisk```
-//! 
+//!
 //! 然后点击授权后,会跳转到另外的一个空白网页上,此时查看地址栏上的地址大概是这样的样子:
-//! 
+//!
 //! ```http://openapi.baidu.com/oauth/2.0/login_success#expires_in=2592000&access_token={access_token}&session_secret={session_secret}&session_key={session_key}&scope=basic+netdisk```
-//! 
+//!
 //! 其中access_token后面一段是我们需要的,保存下来即可
-//! 
+//!
 //! 使用期限是30天,但如果这个access_token一直在使用的话 是不会过期的,过期需要重新查询.
 //!
 //!**注意:本库不提供作弊功能!!!**
@@ -203,6 +203,11 @@ pub struct FileInfo {
     pub thumbs: Option<String>,
     pub dir_empty: Option<i64>,
 }
+impl FileId for FileInfo {
+    fn ret_file_id(&self) -> i64 {
+        return self.fs_id;
+    }
+}
 
 ///拓展的文件信息结构体,由get_file_info返回.
 ///
@@ -246,6 +251,12 @@ pub struct SearchResult {
     pub thumbs: Option<String>,
 }
 
+impl FileId for SearchResult {
+    fn ret_file_id(&self) -> i64 {
+        return self.fs_id;
+    }
+}
+
 /// [FileInfo] 的迭代器,可被clone.
 #[derive(Clone)]
 pub struct FileInfoIter {
@@ -259,6 +270,12 @@ impl FileInfoIter {
             inner_data: in_vec,
             inner_count: 0,
         }
+    }
+}
+
+pub trait FileId {
+    fn ret_file_id(&self) -> i64 {
+        0_i64
     }
 }
 
@@ -298,14 +315,15 @@ mod tests {
     }
 
     #[test]
-    fn test_search(){
+    fn test_search() {
         let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
         let api = YunApi::new(&key);
-        let r = api.search_with_key("唱戏机", "/", true, 1, 100, false).unwrap();
+        let r = api
+            .search_with_key("唱戏机", "/", true, 1, 100, false)
+            .unwrap();
         for item in r {
-            println!("item = {}",item.fs_id);
+            println!("item = {}", item.fs_id);
         }
-
     }
 
     #[test]
