@@ -40,7 +40,7 @@ impl ApiError {
     }
     /// 返回api错误的原因
     pub fn ret_prompt(&self) -> String {
-        return self.errno_prompt.clone();
+        return self.errno_prompt.clone() + ";" + &self.custom_prompt.clone();
     }
 
     /// 返回底层错误码
@@ -50,6 +50,6 @@ impl ApiError {
 }
 impl Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.errno_prompt)
+        write!(f, "{};{}", self.errno_prompt, self.custom_prompt)
     }
 }

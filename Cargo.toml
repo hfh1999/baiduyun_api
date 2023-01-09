@@ -12,5 +12,10 @@ keywords = ["baiduyun", "api"]
 
 [dependencies]
 reqwest = { version = "0.11", features = ["blocking", "json","cookies"] }
-serde_json = "1.0.64"
 serde = "1.0.126"
+serde_json = "1.0.64"
+serde_qs = "0.10.1"
+curl = "0.4.44"
+md5 = "0.7.0"
+data-encoding = "2.3.3"
+urlencoding = "2.1.2"
