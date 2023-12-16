@@ -217,7 +217,7 @@ impl YunApi {
     ///
     ///其中参数dir表示目录名,limit表示每次最多的条数(即每页limit个条目),start表示当前查询的总序号.
     ///limit不可超过10000
-    ///返回信息的具体的字段见[FilePtr]
+    ///返回信息的具体的字段见[FileInfo]
     /// [FileInfoIter] 是一个FileInfo的迭代器.
     pub fn get_files_list(
         &self,
