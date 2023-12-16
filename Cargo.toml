@@ -11,6 +11,6 @@ keywords = ["baiduyun", "api"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-reqwest = { version = "0.11", features = ["blocking", "json","cookies"] }
-serde_json = "1.0.64"
-serde = "1.0.126"
+reqwest = { version = "^0.11.4", features = ["blocking", "json","cookies"] }
+serde_json = "^1.0.64"
+serde = "^1.0.126"
