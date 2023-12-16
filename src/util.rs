@@ -270,92 +270,91 @@ impl<'a> YunFs<'a> {
     }
 }
 
-extern crate curl;
-use curl::easy::Easy;
-use std::fs::File;
+use reqwest::blocking::Client;
+use reqwest::header::CONTENT_LENGTH;
+use reqwest::header::RANGE;
+use reqwest::header::USER_AGENT;
+//use reqwest::header::CONTENT_RANGE;
+use std::fs::OpenOptions;
 use std::io::Write;
 
-///文件下载器 (包装了[curl](https://crates.io/crates/curl))
+///下载文件到指定的位置
 ///
 ///其中参数url,是你获取的下载链接,access_token是用户token,dst下载下来的文件在文件系统中的位置
+///block_size用于分段下载，若值为0则不进行分段,若值不为0则以MB为单位进行分段
+///如果is_debug:设为true则会有简单的调试信息类似下面这样:
 ///
-///注意: 若access_token为空str，则进行普通的下载
-///
-pub struct YunDownloader {
-    access_token_url: String,
-    progress_func: Option<Box<dyn FnMut(f64, f64, f64, f64) -> bool + Send + 'static>>,
-}
-
-impl YunDownloader {
-    ///创建一个downloader
-    /// in_access_token 为access_token值,用于下载百度盘链接
-    /// 若只是简单下载非百度链接，只需输入空str即可
-    pub fn new(in_access_token: &str) -> Self {
-        let url_string: String;
-        if in_access_token.is_empty() {
-            url_string = String::default();
-        } else {
-            url_string = format!("&access_token={}", in_access_token);
-        }
-        YunDownloader {
-            access_token_url: url_string,
-            progress_func: None,
-        }
-    }
-
-    /// 用来设置进度跟踪回调
-    pub fn set_progress_funtion<F>(&mut self, in_f: F)
-    where
-        F: FnMut(f64, f64, f64, f64) -> bool + Send + 'static,
-    {
-        self.progress_func = Some(Box::new(in_f));
-    }
-
-    pub fn download(&mut self, in_url: &str, in_dst: &str) -> f64 {
-        curl::init();
-        let mut easy = Easy::new();
-        let url = format!("{}{}", in_url, self.access_token_url);
-        easy.url(&url).unwrap();
-        let mut output_file = File::create(in_dst).unwrap();
-        if self.progress_func.is_some() {
-            easy.progress(true).unwrap();
-            let mut func = self.progress_func.take().unwrap();
-            //easy.progress_function(**b);
-            //let a = 44f64;
-            //let b = 44f64;
-            //let c = 44f64;
-            //let d = 44f64;
-            //func(a,b,c,d);
-            easy.progress_function(move |a, b, c, d| -> bool { func(a, b, c, d) })
-                .unwrap();
-        }
-        easy.write_function(move |data| {
-            output_file.write_all(data).unwrap();
-            Ok(data.len())
-        })
+///```
+///recieve data total 20 MB
+///recieve data total 40 MB
+///recieve data total 60 MB
+///recieve data total 80 MB
+///recieve data total 100 MB
+///recieve data total 120 MB
+///recieve data total 140 MB
+///recieve data total 160 MB
+///recieve data total 161 MB
+///finish download.
+///```
+pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_debug: bool) {
+    let mut has_downloaded: i64 = 0;
+    let size: i32 = 1024 * 1024 * block_size; //每个range1MB大小,100MB
+    let downloader = Client::new();
+    let download_url = format!("{}&access_token={}", url, access_token);
+    let mut file_to_store = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .write(true)
+        .open(dst)
         .unwrap();
-        easy.perform().unwrap();
-        easy.download_size().unwrap()
+    if size == 0 {
+        let response = downloader
+            .get(&download_url)
+            .header(USER_AGENT, "pan.baidu.com")
+            .send()
+            .unwrap();
+        file_to_store
+            .write_all(&(response.bytes().unwrap()))
+            .unwrap();
+        return;
     }
-}
+    let mut range_head = 0;
+    let mut range = format!("bytes={}-{}", range_head, range_head + size - 1);
+    loop {
+        let requestbuild = downloader
+            .get(&download_url)
+            .header(USER_AGENT, "pan.baidu.com")
+            .header(RANGE, &range);
+        let response = requestbuild.send().unwrap();
+        let len_rev = response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        if is_debug {
+            has_downloaded += human_quota(len_rev as i64).1 as i64;
+            println!("recieve data total {} MB", has_downloaded);
+        }
+        file_to_store
+            .write_all(&(response.bytes().unwrap()))
+            .unwrap();
+        //println!("{}",content_range);
+        //不再需要再请求了
+        if len_rev < size {
+            if is_debug {
+                println!("finish download.");
+            }
+            break;
+        } else {
+            //需要请求下一段
 
-#[cfg(test)]
-mod test {
-    #[test]
-    fn test_download() {
-        use super::YunDownloader;
-        use std::fs::File;
-        let down_tracer = Box::new(|a, b, c, d| {
-            println!("a = {}, b = {}, c = {}, d = {}", a, b, c, d);
-            true
-        });
-        let d_url = "http://www.baidu.com";
-        let file_name = "D:/baidu.html";
-        let mut downloader = YunDownloader::new("");
-        downloader.set_progress_funtion(down_tracer);
-        let download_size = downloader.download(d_url, file_name);
-        let file_size = File::open(file_name).unwrap().metadata().unwrap().len();
-
-        assert!(download_size as u64 == file_size); // 不知道是否严谨
+            range_head = range_head + size;
+            range = format!("bytes={}-{}", range_head, range_head + size - 1);
+            //println!("{} ====> {}",range,len_rev);
+            //println!("contine get next!");
+        }
     }
 }

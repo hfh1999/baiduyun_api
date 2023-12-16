@@ -130,13 +130,12 @@
 //!finish download.
 //!```
 
+pub use error::ApiError;
 use serde::{Deserialize, Serialize};
-
+pub use yunapi::YunApi;
 mod error;
 pub mod util;
 mod yunapi;
-pub use error::ApiError;
-pub use yunapi::YunApi;
 
 ///用户信息结构体,由[YunApi::get_user_info()]返回
 ///
@@ -224,19 +223,18 @@ impl FileId for FileInfo {
 ///- height 图片高度.
 ///- width 图片宽度.
 ///- date_taken 图片的拍摄时间.
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileInfoEx {
     pub category: i64,
-    pub dlink: Option<String>,
-    pub file_name: Option<String>,
-    pub is_dir: Option<i64>,
+    pub dlink: String,
+    pub file_name: String,
+    pub is_dir: i64,
     pub server_ctime: i64,
     pub server_mtime: i64,
     pub size: i64,
     //pub thumbs:
-    pub height: Option<i64>,
-    pub width: Option<i64>,
-    pub date_taken: Option<i64>,
+    pub height: i64,
+    pub width: i64,
+    pub date_taken: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -259,53 +257,6 @@ impl FileId for SearchResult {
     }
 }
 
-/// 预上传时的返回值
-///
-/// - path: 文件的绝对路径
-/// - uploadid: 上传id
-/// - return_type: 返回类型，1 文件在云端不存在、2 文件在云端已存在
-/// - block_list: 需要上传的分片序号，索引从0开始
-#[derive(Serialize, Deserialize)]
-pub struct PreUploadRet {
-    pub path: String,
-    pub uploadid: String,
-    pub return_type: u8,
-    pub block_list: Vec<u32>,
-}
-
-///Upload接口的返回值
-///
-#[derive(Serialize, Deserialize)]
-pub struct UploadRet {
-    pub md5: String,
-}
-
-/// Create接口的返回值
-///
-#[derive(Deserialize, Serialize)]
-pub struct CreateRet {
-    fs_id: u64,
-    md5: String,
-    server_filename: String,
-    category: u8,
-    path: String,
-    size: usize,
-    ctime: u64,
-    mtime: u64,
-    isdir: u8,
-}
-/// 上传时的重命名策略
-///
-/// - NoRename 不重命名,返回冲突
-/// - Rename 只要path冲突就进行重命名
-/// - RenameStrict 当path和block_list都不同时才进行重命名
-/// - Override 直接覆盖
-pub enum UploadNameStrategy {
-    NoRename = 0,
-    Rename = 1,
-    RenameStrict = 2,
-    Override = 3,
-}
 /// [FileInfo] 的迭代器,可被clone.
 #[derive(Clone)]
 pub struct FileInfoIter {
@@ -353,10 +304,6 @@ mod tests {
         let list_vec: Vec<FileInfo> = list.collect();
         assert!(list_vec.len() == 10);
         println!("list len = {}", list_vec.len());
-        let infos = api.get_files_info(&list_vec).unwrap();
-        for item in infos {
-            println!("time = {}", item.server_ctime);
-        }
     }
 
     #[test]
@@ -380,28 +327,26 @@ mod tests {
     }
 
     #[test]
-    fn test_serde_url() {
-        extern crate serde_qs;
-
-        #[derive(Serialize, Deserialize)]
-        struct FormatStruct {
-            value: u8,
-            data: Vec<String>,
-            flag: bool,
+    fn download_test() {
+        let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
+        let api = YunApi::new(&key);
+        let mut myfs = util::YunFs::new(&api);
+        println!("current dir ===> {}", myfs.pwd().unwrap());
+        myfs.chdir("学习资料/").unwrap();
+        println!("current dir ===> {}", myfs.pwd().unwrap());
+        let files = myfs.ls().unwrap();
+        let mut file_to_download: FileInfo = FileInfo::default();
+        for item in files {
+            if item
+                .server_filename
+                .contains("中文第六版@www.java1234.com.pdf")
+            {
+                println!("pdf: -> {}; id ={} ", item.server_filename, item.fs_id);
+                file_to_download = item;
+            }
         }
-
-        let test_data = FormatStruct {
-            value: 8,
-            data: vec!["hello".to_owned(), "thanks".to_owned(), "haha".to_owned()],
-            flag: true,
-        };
-
-        println!(
-            "test_data's string == {}",
-            serde_qs::to_string(&test_data).unwrap()
-        );
+        let link = api.get_file_dlink(file_to_download).unwrap();
+        println!("{}", link);
+        util::download(&link, "D:/test.pdf", 100, &key, true);
     }
-
-    #[test]
-    fn test_serde_json() {}
 }
