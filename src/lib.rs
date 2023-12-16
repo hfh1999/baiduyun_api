@@ -278,6 +278,11 @@ pub trait FileId {
         0_i64
     }
 }
+impl FileId for i64 {
+    fn ret_file_id(&self) -> i64 {
+        return *self;
+    }
+}
 
 impl Iterator for FileInfoIter {
     type Item = FileInfo;
