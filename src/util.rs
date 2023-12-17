@@ -10,6 +10,7 @@ use super::ApiError;
 use super::FileInfo;
 use super::FileInfoIter;
 use super::YunApi;
+use std::path::Path;
 use std::path::PathBuf;
 
 use std::fmt::Display;
@@ -39,6 +40,33 @@ pub fn human_quota(in_quta: i64) -> (f64, f64, f64) {
     let m = (1024 * 1024) as f64;
     let g = (1024 * 1024 * 1024) as f64;
     (tmp_quota / k, tmp_quota / m, tmp_quota / g)
+}
+
+/// 分片上传的md5计算器
+///
+/// 返回值是一个vec of string
+pub fn calculate_file_md5_vec<P: AsRef<Path>>(path: P) -> Vec<String> {
+    use std::fs::File;
+    use std::io::Read;
+    let mut f = File::open(path).unwrap();
+    const SIZE: usize = 1024 * 1024 * 4;
+    let mut buffer = vec![0; SIZE];
+    let mut result: Vec<String> = vec![];
+    loop {
+        if let Ok(size) = f.read(&mut buffer[0..SIZE]) {
+            let slice_md5 = md5::compute(&buffer)
+                .into_iter()
+                .map(|x| format!("{:02x}", x))
+                .collect::<String>();
+            result.push(slice_md5);
+            if size < SIZE {
+                break;
+            }
+        } else {
+            panic!()
+        }
+    }
+    return result;
 }
 
 /// 若输入一个有效的vip类型数字,返回一个相应的中文描述字符串
@@ -356,5 +384,15 @@ pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_de
             //println!("{} ====> {}",range,len_rev);
             //println!("contine get next!");
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_md5_util() {
+        let r = calculate_file_md5_vec("D:/test.pdf");
+        println!("{:?}", r);
     }
 }

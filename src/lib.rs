@@ -354,4 +354,14 @@ mod tests {
         println!("{}", link);
         util::download(&link, "D:/test.pdf", 100, &key, true);
     }
+
+    #[test]
+    fn test_crate_file() {
+        let key = read_to_string("./key.txt").unwrap();
+        let test_file = "D:/test.pdf";
+        let api = YunApi::new(&key);
+        let meta = std::fs::metadata(test_file).unwrap();
+        let block_list = util::calculate_file_md5_vec(test_file);
+        api.create_file("/apps/media_shell/test_1.pdf", meta.len(), &block_list)
+    }
 }

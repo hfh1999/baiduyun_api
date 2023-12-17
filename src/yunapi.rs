@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::error::ApiError;
 use super::FileId;
 use super::FileInfo;
@@ -8,6 +10,8 @@ use super::SearchResult;
 use super::UserInfo;
 use reqwest::blocking;
 use reqwest::header::USER_AGENT;
+use serde::Serialize;
+use serde_json::json;
 use serde_json::Value;
 macro_rules! arg_to_string {
     ($item:expr) => {{
@@ -116,12 +120,14 @@ impl YunApi {
                 addr.push_str(&format!("{}{}", '&', item));
             }
             //debug;;; println!("{}", addr);
+            println!("{}", addr);
             addr
         } else {
             let mut addr = format!("{}?access_token={}", node_addr, self.access_token);
             for item in arg_vec {
                 addr.push_str(&format!("{}{}", '&', item));
             }
+            println!("{}", addr);
             println!("{}", addr);
             addr
         }
@@ -144,6 +150,28 @@ impl YunApi {
             return Err(ApiError::new(8989, "send request error."));
         }
     }
+
+    fn post_request(&self, in_node: YunNode, body: String) -> Result<Value, ApiError> {
+        // TODO
+        if let Ok(send_result) = self
+            .client
+            .post(self.get_addr(in_node, ""))
+            .body(body)
+            .header(USER_AGENT, "pan.baidu.com")
+            .send()
+        {
+            if let Ok(text) = send_result.text() {
+                let tmp = Ok(serde_json::from_str(&text).unwrap());
+                // debug;;;   println!("{:?}", tmp);
+                tmp
+            } else {
+                return Err(ApiError::new(8989, "decode text error."));
+            }
+        } else {
+            return Err(ApiError::new(8989, "send request error."));
+        }
+    }
+
     ///得到用户的基本信息
     ///
     ///返回信息的具体字段参见[UserInfo]
@@ -346,5 +374,40 @@ impl YunApi {
         } else {
             return Err(ApiError::new(errno, "Get files info error."));
         }
+    }
+
+    /// 上传：预上传
+    ///
+    ///
+    pub fn create_file<T: AsRef<str>>(&self, path: &str, size: u64, block_list: &[T]) {
+        let block_list_str = block_list
+            .into_iter()
+            .map(|x| x.as_ref().to_string())
+            .collect::<Vec<String>>();
+        let test_params = &[
+            ("path", path.to_owned()),
+            ("size", size.to_string()),
+            ("is_dir", 0.to_string()),
+            ("block_list", format!("{:?}", block_list_str)),
+            ("autoinit", 1.to_string()),
+        ];
+        let params = serde_urlencoded::to_string(test_params).unwrap();
+        self.post_request(YunNode::PreCreate, params).unwrap();
+    }
+
+    /// 上传：分片上传接口
+    ///
+    pub fn upload(&self, data: &[u8]) {
+        // copy
+        let form = reqwest::blocking::multipart::Form::new().part(
+            "file",
+            reqwest::blocking::multipart::Part::bytes(data.to_vec()).file_name("h.txt"),
+        );
+
+        self.client
+            .post(self.get_addr(YunNode::UpLoad, ""))
+            .multipart(form)
+            .send()
+            .unwrap();
     }
 }
