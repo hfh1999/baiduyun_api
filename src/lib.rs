@@ -2,7 +2,7 @@
 //!
 //!
 //!# 一,简介
-//!这个库提供方便地使用百度云官方api的方法
+//!这个库提供方便地使用百度云官方api的方法 最新的版本请看crates.io的版本号
 //!
 //! 对用户的云盘进行访问前首先要获取access_token,具体请看官网的[这里](https://pan.baidu.com/union/document/entrance#%E6%8E%A5%E5%85%A5%E6%B5%81%E7%A8%8B)
 //!
