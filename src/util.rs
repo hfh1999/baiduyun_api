@@ -4,7 +4,9 @@
 //!包括:
 //!- 单线程及多线程下载设施
 //!- 单位转换之设施
-//!- 目录结构之设施: [YunFs](YunFs) ,提供云端文件系统的抽象.
+//!- 目录结构之设施: [YunFs](YunFs) ,提供云端文件系统的抽象
+//!
+//!所有错误处理统一使用 [ApiError](crate::ApiError)
 
 use super::ApiError;
 use super::FileInfo;
@@ -12,30 +14,12 @@ use super::FileInfoIter;
 use super::YunApi;
 use std::path::PathBuf;
 
-use std::fmt::Display;
-#[derive(Debug)]
-pub struct UtilError {
-    prompt: String,
-}
-impl UtilError {
-    fn new(prompt: &str) -> UtilError {
-        UtilError {
-            prompt: String::from(prompt),
-        }
-    }
-}
-
-impl Display for UtilError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.prompt)
-    }
-}
 /// 提供方便的容量大小转换
 ///
 ///返回是一个元组,从左往右依次是转换为KB,MB,GB的值,用浮点数表示
 pub fn human_quota(in_quta: i64) -> (f64, f64, f64) {
     let tmp_quota = in_quta as f64;
-    let k = 1024 as f64;
+    let k = 1024_f64;
     let m = (1024 * 1024) as f64;
     let g = (1024 * 1024 * 1024) as f64;
     (tmp_quota / k, tmp_quota / m, tmp_quota / g)
@@ -44,12 +28,12 @@ pub fn human_quota(in_quta: i64) -> (f64, f64, f64) {
 /// 若输入一个有效的vip类型数字,返回一个相应的中文描述字符串
 ///
 /// 会员类型，0普通用户、1普通会员、2超级会员
-pub fn get_vip_type_str(vip_type: i64) -> Result<String, UtilError> {
+pub fn get_vip_type_str(vip_type: i64) -> Result<String, ApiError> {
     match vip_type {
         0 => Ok(String::from("普通用户")),
         1 => Ok(String::from("普通会员")),
         2 => Ok(String::from("超级会员")),
-        _ => Err(UtilError::new("Not Support vip_type.")),
+        _ => Err(ApiError::from("Not Support vip_type.")),
     }
 }
 
@@ -64,13 +48,15 @@ pub fn get_vip_type_str(vip_type: i64) -> Result<String, UtilError> {
 ///- 返回当前路径[pwd()](YunFs::pwd())
 ///- 切换路径[chdir()](YunFs::chdir())
 ///- 列出指定路径的所有文件list
+///
+///所有操作返回 [ApiError](crate::ApiError) 类型的错误
 pub struct YunFs<'a> {
     api: &'a YunApi,
     current_path: PathBuf,
 }
 impl<'a> YunFs<'a> {
     ///创建一个YunFs结构体
-    pub fn new(api_ref: &YunApi) -> YunFs {
+    pub fn new(api_ref: &'a YunApi) -> YunFs<'a> {
         YunFs {
             api: api_ref,
             current_path: PathBuf::from("/"), // 总是以绝对路径的形式
@@ -81,17 +67,17 @@ impl<'a> YunFs<'a> {
     ///
     ///注意:每次都检查当前目录是否存在
     ///
-    pub fn pwd(&self) -> Result<String, UtilError> {
+    pub fn pwd(&self) -> Result<String, ApiError> {
         let path_string: String = self.current_path.to_str().unwrap().into();
-        if let Ok(_) = self.api.get_files_list(&path_string, 0, 0) {
+        if self.api.get_files_list(&path_string, 0, 0).is_ok() {
             Ok(path_string.clone())
         } else {
-            Err(UtilError::new(
+            Err(ApiError::from(
                 "Error when pwd():the directory may not exist.",
             ))
         }
     }
-    fn check_dir_fmt(dir_str: &str) -> Result<(), UtilError> {
+    fn check_dir_fmt(dir_str: &str) -> Result<(), ApiError> {
         // 以下这几种才是正确的目录形式
         // .[/]
         // ..[/]
@@ -115,7 +101,7 @@ impl<'a> YunFs<'a> {
                     continue;
                 } else {
                     //error.
-                    return Err(UtilError::new(
+                    return Err(ApiError::from(
                         "path resolve Error: `.` not the correct position.",
                     ));
                 }
@@ -126,30 +112,29 @@ impl<'a> YunFs<'a> {
                     continue;
                 } else {
                     //error.
-                    return Err(UtilError::new(
+                    return Err(ApiError::from(
                         "path resolve Error: `/` not the correct position.",
                     ));
                 }
             } else {
                 //剩下的应该都是普通字符,特殊字符则报错
-                match item {
-                    '\\' => {
-                        return Err(UtilError::new(
+                if item == '\\' {
+                  
+                        return Err(ApiError::from(
                             "path resolve Error: `\\` not the accepted char.",
                         ))
-                    }
-                    _ => {}
                 }
-                if c_state == 1 || c_state == 2 {
-                    return Err(UtilError::new("`.` or `..`can not be here."));
+
+                if c_state == states.1 || c_state == states.2 {
+                    return Err(ApiError::from("`.` or `..`can not be here."));
                 }
                 c_state = states.4;
                 continue;
             }
         }
-        return Ok(());
+        Ok(())
     }
-    fn resolve_path(&self, dir_str: &str) -> Result<String, UtilError> {
+    fn resolve_path(&self, dir_str: &str) -> Result<String, ApiError> {
         //先检查是否符合路径规范
         match Self::check_dir_fmt(dir_str) {
             Ok(_) => {}
@@ -211,7 +196,7 @@ impl<'a> YunFs<'a> {
             return Ok(format!("/{}", tmp_dir));
         }
         let ret_string = format!("{}/{}", self.current_path.to_str().unwrap(), tmp_dir);
-        return Ok(ret_string);
+        Ok(ret_string)
     }
     ///切换当前目录
     ///
@@ -224,20 +209,17 @@ impl<'a> YunFs<'a> {
     ///- "../dir1/dir2[/]"
     ///- "/dir1/dir2/dir3[/]"
     ///- "dir1/dir2/dir3[/]"
-    pub fn chdir(&mut self, dir_str: &str) -> Result<(), UtilError> {
+    pub fn chdir(&mut self, dir_str: &str) -> Result<(), ApiError> {
         //每一次目录变动都需要进行一次在线检查,检查失败则操作失败
         let resolved_result = self.resolve_path(dir_str);
-        let dir_resolved = match resolved_result {
-            Ok(dir_path) => dir_path,
-            Err(error) => return Err(error),
-        };
+        let dir_resolved = resolved_result?;
         //debug;;; println!("resolved:path {}",dir_resolved);
-        if let Ok(_) = self.api.get_files_list(&dir_resolved, 0, 0) {
+        if self.api.get_files_list(&dir_resolved, 0, 0).is_ok() {
             //将本地表示也改变为目录切换后的版本
             self.current_path = PathBuf::from(dir_resolved);
             Ok(())
         } else {
-            Err(UtilError::new("Error:chdir():the directory may not exist."))
+            Err(ApiError::from("Error:chdir():the directory may not exist."))
         }
     }
 
@@ -304,7 +286,6 @@ pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_de
     let mut file_to_store = OpenOptions::new()
         .append(true)
         .create(true)
-        .write(true)
         .open(dst)
         .unwrap();
     if size == 0 {
@@ -351,10 +332,136 @@ pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_de
         } else {
             //需要请求下一段
 
-            range_head = range_head + size;
+            range_head += size;
             range = format!("bytes={}-{}", range_head, range_head + size - 1);
             //println!("{} ====> {}",range,len_rev);
             //println!("contine get next!");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_human_quota() {
+        let (kb, mb, gb) = human_quota(1024);
+        assert_eq!(kb, 1.0);
+        assert_eq!(mb, 0.0009765625);
+        assert_eq!(gb, 9.5367431640625e-7);
+    }
+
+    #[test]
+    fn test_human_quota_large() {
+        let (kb, mb, gb) = human_quota(1024 * 1024 * 1024);
+        assert_eq!(kb, 1048576.0);
+        assert_eq!(mb, 1024.0);
+        assert_eq!(gb, 1.0);
+    }
+
+    #[test]
+    fn test_get_vip_type_str_normal_user() {
+        let result = get_vip_type_str(0);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "普通用户");
+    }
+
+    #[test]
+    fn test_get_vip_type_str_normal_member() {
+        let result = get_vip_type_str(1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "普通会员");
+    }
+
+    #[test]
+    fn test_get_vip_type_str_super_member() {
+        let result = get_vip_type_str(2);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "超级会员");
+    }
+
+    #[test]
+    fn test_get_vip_type_str_invalid() {
+        let result = get_vip_type_str(999);
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.ret_errno(), 8989);
+        let display = format!("{}", error);
+        assert!(display.contains("Not Support vip_type."));
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_valid_absolute() {
+        let result = YunFs::check_dir_fmt("/dir1/dir2");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_valid_relative() {
+        let result = YunFs::check_dir_fmt("./dir1/dir2");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_valid_parent() {
+        let result = YunFs::check_dir_fmt("../dir1");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_current() {
+        let result = YunFs::check_dir_fmt(".");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_parent_dir() {
+        let result = YunFs::check_dir_fmt("..");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_invalid_backslash() {
+        let result = YunFs::check_dir_fmt("dir1\\dir2");
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.ret_errno(), 8989);
+        let display = format!("{}", error);
+        assert!(display.contains("path resolve Error"));
+        assert!(display.contains("\\"));
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_invalid_double_slash() {
+        let result = YunFs::check_dir_fmt("//dir1");
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.ret_errno(), 8989);
+        let display = format!("{}", error);
+        assert!(display.contains("path resolve Error"));
+        assert!(display.contains("/"));
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_invalid_dot_position() {
+        let result = YunFs::check_dir_fmt("dir1./dir2");
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.ret_errno(), 8989);
+        let display = format!("{}", error);
+        assert!(display.contains("path resolve Error"));
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_trailing_slash() {
+        let result = YunFs::check_dir_fmt("/dir1/");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_simple() {
+        let result = YunFs::check_dir_fmt("dir1");
+        assert!(result.is_ok());
     }
 }
