@@ -139,7 +139,7 @@ mod models;
 pub mod util;
 mod yunapi;
 
-pub use models::*;
+pub use models::{UserInfo, QuotaInfo, FileInfo, FileInfoEx, SearchResult, FileInfoIter, FileId};
 
 #[cfg(test)]
 mod tests;
