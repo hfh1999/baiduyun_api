@@ -131,72 +131,15 @@
 //!```
 
 pub use error::ApiError;
-pub use yunapi::YunApi;
 pub use util::YunFs;
+pub use yunapi::YunApi;
 
 mod error;
 mod models;
-mod yunapi;
 pub mod util;
+mod yunapi;
 
 pub use models::*;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs::read_to_string;
-    #[test]
-    fn test_api() {
-        // load key form file to prevent key to reveal.
-        let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
-        let api = YunApi::new(&key);
-        let list = api.get_files_list("/", 0, 10).unwrap();
-        let list_vec: Vec<FileInfo> = list.collect();
-        assert!(list_vec.len() == 10);
-        println!("list len = {}", list_vec.len());
-    }
-
-    #[test]
-    #[should_panic]
-    fn error_key() {
-        let key = "++++123.64295f7207e0dcc4612276a7955e11f9.YaWhelqaKCPDHKxghpjx7shiRLRS44h1gcl4t7-.ckQMUQ";
-        let api = YunApi::new(key);
-        api.get_files_list("/", 0, 10).unwrap();
-    }
-
-    #[test]
-    fn test_search() {
-        let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
-        let api = YunApi::new(&key);
-        let r = api
-            .search_with_key("唱戏机", "/", true, 1, 100, false)
-            .unwrap();
-        for item in r {
-            println!("item = {}", item.fs_id);
-        }
-    }
-
-    #[test]
-    fn download_test() {
-        let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
-        let api = YunApi::new(&key);
-        let mut myfs = util::YunFs::new(&api);
-        println!("current dir ===> {}", myfs.pwd().unwrap());
-        myfs.chdir("学习资料/").unwrap();
-        println!("current dir ===> {}", myfs.pwd().unwrap());
-        let files = myfs.ls().unwrap();
-        let mut file_to_download: FileInfo = FileInfo::default();
-        for item in files {
-            if item
-                .server_filename
-                .contains("中文第六版@www.java1234.com.pdf")
-            {
-                println!("pdf: -> {}; id ={} ", item.server_filename, item.fs_id);
-                file_to_download = item;
-            }
-        }
-        let link = api.get_file_dlink(file_to_download).unwrap();
-        println!("{}", link);
-        util::download(&link, "D:/test.pdf", 100, &key, true);
-    }
-}
+mod tests;

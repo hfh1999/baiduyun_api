@@ -119,10 +119,9 @@ impl<'a> YunFs<'a> {
             } else {
                 //剩下的应该都是普通字符,特殊字符则报错
                 if item == '\\' {
-                  
-                        return Err(ApiError::from(
-                            "path resolve Error: `\\` not the accepted char.",
-                        ))
+                    return Err(ApiError::from(
+                        "path resolve Error: `\\` not the accepted char.",
+                    ));
                 }
 
                 if c_state == states.1 || c_state == states.2 {

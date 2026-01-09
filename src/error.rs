@@ -112,7 +112,10 @@ mod tests {
     #[test]
     fn test_api_error_ret_prompt() {
         let error = ApiError::new(2, "test");
-        assert_eq!(error.ret_prompt(), "argument error,Please check your argument.");
+        assert_eq!(
+            error.ret_prompt(),
+            "argument error,Please check your argument."
+        );
     }
 
     #[test]

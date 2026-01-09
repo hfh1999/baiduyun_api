@@ -161,3 +161,43 @@ impl Iterator for FileInfoIter {
         }
     }
 }
+
+#[derive(Serialize)]
+pub struct GetFileListParams {
+    pub dir: String,
+    pub start: i64,
+    pub limit: i64,
+}
+
+#[derive(Serialize)]
+pub struct GetFileInfoParams {
+    #[serde(serialize_with = "serialize_fsids")]
+    pub fsids: Vec<i64>,
+    pub dlink: i64,
+    pub extra: i64,
+}
+
+fn serialize_fsids<S>(fsids: &[i64], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let tmp_string: String = fsids
+        .iter()
+        .map(|x| x.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    serializer.serialize_str(&format!("[{}]", tmp_string))
+}
+
+#[derive(Serialize)]
+pub struct SearchParams {
+    pub key: String,
+    pub dir: String,
+    pub recursion: i64,
+    pub page: i64,
+    pub num: i64,
+    pub web: i64,
+}
+
+#[derive(Serialize)]
+pub struct EmptyParams;

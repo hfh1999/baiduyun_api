@@ -2,53 +2,10 @@ use super::error::ApiError;
 use super::models::*;
 use reqwest::blocking;
 use reqwest::header::USER_AGENT;
+use serde::Serialize;
 use serde_json::Value;
-macro_rules! arg_to_string {
-    ($item:expr) => {{
-        trait PrintAsArg {
-            fn as_arg_str(&self) -> String {
-                String::new()
-            }
-        }
+use serde_urlencoded::to_string;
 
-        impl PrintAsArg for Vec<i64> {
-            fn as_arg_str(&self) -> String {
-                let mut tmp_string = String::new();
-                let len = self.len();
-                for (index, item) in self.iter().enumerate() {
-                    tmp_string.push_str(&(item.to_string()));
-                    if index != len - 1 {
-                        tmp_string.push(',');
-                    }
-                }
-                format!("[{}]", tmp_string)
-            }
-        }
-        impl PrintAsArg for i64 {
-            fn as_arg_str(&self) -> String {
-                self.to_string()
-            }
-        }
-        impl PrintAsArg for &str {
-            fn as_arg_str(&self) -> String {
-                self.to_string()
-            }
-        }
-        format!("{}={}", stringify!($item), $item.as_arg_str())
-    }};
-}
-//用作参数构造的宏
-macro_rules! args {
-    ($($item:expr),+) => {{
-        let mut tmp_string = String::new();
-       $(
-            tmp_string.push_str(&arg_to_string!($item));
-            tmp_string.push_str(";");
-       )
-       +
-       tmp_string
-    }};
-}
 enum YunNode {
     GetUserInfo,
     GetQuotaInfo,
@@ -104,29 +61,29 @@ impl YunApi {
             //pwd: String::from("/"),
         }
     }
-    fn get_addr(&self, in_node: YunNode, args: &str) -> String {
-        let arg_vec: Vec<&str> = args.split(';').filter(|s| !s.is_empty()).collect();
+    fn get_addr<T: Serialize>(&self, in_node: YunNode, params: &T) -> String {
         let node_addr = get_node_addr(in_node);
+        let query_string = to_string(params).unwrap_or_default();
+
         if node_addr.contains('?') {
             let mut addr = format!("{}&access_token={}", node_addr, self.access_token);
-            for item in arg_vec {
-                addr.push_str(&format!("{}{}", '&', item));
+            if !query_string.is_empty() {
+                addr.push_str(&format!("&{}", query_string));
             }
-            //debug;;; println!("{}", addr);
             addr
         } else {
             let mut addr = format!("{}?access_token={}", node_addr, self.access_token);
-            for item in arg_vec {
-                addr.push_str(&format!("{}{}", '&', item));
+            if !query_string.is_empty() {
+                addr.push_str(&format!("&{}", query_string));
             }
-            println!("{}", addr);
             addr
         }
     }
-    fn reqest(&self, in_node: YunNode, args: &str) -> Result<Value, ApiError> {
+    fn reqest<T: Serialize>(&self, in_node: YunNode, params: &T) -> Result<Value, ApiError> {
+        let addr = self.get_addr(in_node, params);
         if let Ok(send_result) = self
             .client
-            .get(self.get_addr(in_node, args))
+            .get(&addr)
             .header(USER_AGENT, "pan.baidu.com")
             .send()
         {
@@ -143,7 +100,8 @@ impl YunApi {
     ///
     ///返回信息的具体字段参见[UserInfo]
     pub fn get_user_info(&self) -> Result<UserInfo, ApiError> {
-        let value = self.reqest(YunNode::GetUserInfo, "").unwrap();
+        let params = EmptyParams;
+        let value = self.reqest(YunNode::GetUserInfo, &params).unwrap();
         let error = value["errno"].as_i64().unwrap();
         if error == 0 {
             Ok(serde_json::from_value(value).unwrap())
@@ -156,7 +114,8 @@ impl YunApi {
     ///
     ///返回信息的具体的字段见[QuotaInfo]
     pub fn get_quota_info(&self) -> Result<QuotaInfo, ApiError> {
-        let value = self.reqest(YunNode::GetQuotaInfo, "").unwrap();
+        let params = EmptyParams;
+        let value = self.reqest(YunNode::GetQuotaInfo, &params).unwrap();
         let error = value["errno"].as_i64().unwrap();
         if error == 0 {
             Ok(serde_json::from_value(value).unwrap())
@@ -176,15 +135,17 @@ impl YunApi {
         let dlink = 1_i64;
         let extra = 1_i64;
         let fsids: Vec<i64> = file_ids.iter().map(|x| x.ret_file_id()).collect();
-        let value = self
-            .reqest(YunNode::GetFileInfo, &args!(fsids, dlink, extra))
-            .unwrap();
+        let params = GetFileInfoParams {
+            fsids,
+            dlink,
+            extra,
+        };
+        let value = self.reqest(YunNode::GetFileInfo, &params).unwrap();
         let errno = value["errno"].as_i64().unwrap();
         if errno == 0 {
             let len = value["list"].as_array().unwrap().len();
             let mut info_vec = Vec::new();
             for index in 0..len {
-                // 这里忽略了thumb的解析.
                 let file_info: FileInfoEx = FileInfoEx {
                     category: value["list"][index]["category"].as_i64().unwrap(),
                     date_taken: value["list"][index]["date_taken"].as_i64().unwrap(),
@@ -226,9 +187,12 @@ impl YunApi {
         if start < 0 {
             return Err(ApiError::new(8989, "start arg error."));
         }
-        let value = self
-            .reqest(YunNode::GetFileList, &args!(dir, start, limit))
-            .unwrap();
+        let params = GetFileListParams {
+            dir: dir.to_string(),
+            start,
+            limit,
+        };
+        let value = self.reqest(YunNode::GetFileList, &params).unwrap();
         let errno = value["errno"].as_i64().unwrap();
         if errno == 0 {
             let len = value["list"].as_array().unwrap().len();
@@ -257,13 +221,15 @@ impl YunApi {
     where
         T: FileId,
     {
-        //先构造参数
         let fsids: Vec<i64> = files.iter().map(|x| x.ret_file_id()).collect();
         let dlink = 1_i64;
+        let params = GetFileInfoParams {
+            fsids,
+            dlink,
+            extra: 0,
+        };
 
-        let value = self
-            .reqest(YunNode::GetFileInfo, &args!(fsids, dlink))
-            .unwrap();
+        let value = self.reqest(YunNode::GetFileInfo, &params).unwrap();
         let errno = value["errno"].as_i64().unwrap();
         if errno == 0 {
             let mut dlink_vec: Vec<String> = Vec::new();
@@ -313,21 +279,21 @@ impl YunApi {
         in_num: i64,
         in_web: bool,
     ) -> Result<Vec<SearchResult>, ApiError> {
-        let key = search_key;
-        let dir = search_dir;
-        let recursion = is_recursive as i64;
-        let page = in_page;
-        let num = in_num;
-        let web = in_web as i64;
-        if page < 1 {
+        let params = SearchParams {
+            key: search_key.to_string(),
+            dir: search_dir.to_string(),
+            recursion: is_recursive as i64,
+            page: in_page,
+            num: in_num,
+            web: in_web as i64,
+        };
+        if in_page < 1 {
             return Err(ApiError::new(8989, "Page is less than 1."));
         }
-        if num > 1000 {
+        if in_num > 1000 {
             return Err(ApiError::new(8989, "Num is more than 1000."));
         }
-        let value = self
-            .reqest(YunNode::Search, &args!(key, dir, recursion, page, num, web))
-            .unwrap();
+        let value = self.reqest(YunNode::Search, &params).unwrap();
         let errno = value["errno"].as_i64().unwrap();
         if errno == 0 {
             let len = value["list"].as_array().unwrap().len();
@@ -341,5 +307,76 @@ impl YunApi {
         } else {
             Err(ApiError::new(errno, "Get files info error."))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_addr_with_existing_query_params() {
+        let api = YunApi::new("test_token");
+        let params = EmptyParams;
+        let addr = api.get_addr(YunNode::GetUserInfo, &params);
+        assert_eq!(
+            addr,
+            "https://pan.baidu.com/rest/2.0/xpan/nas?method=uinfo&access_token=test_token"
+        );
+    }
+
+    #[test]
+    fn test_get_addr_without_existing_query_params() {
+        let api = YunApi::new("test_token");
+        let params = GetFileListParams {
+            dir: "/".to_string(),
+            start: 0,
+            limit: 10,
+        };
+        let addr = api.get_addr(YunNode::GetFileList, &params);
+        assert_eq!(addr, "https://pan.baidu.com/rest/2.0/xpan/file?method=list&access_token=test_token&dir=%2F&start=0&limit=10");
+    }
+
+    #[test]
+    fn test_get_addr_with_special_chars() {
+        let api = YunApi::new("test_token");
+        let params = SearchParams {
+            key: "测试中文".to_string(),
+            dir: "/test dir".to_string(),
+            recursion: 0,
+            page: 1,
+            num: 50,
+            web: 1,
+        };
+        let addr = api.get_addr(YunNode::Search, &params);
+        assert!(addr.contains("key=%E6%B5%8B%E8%AF%95%E4%B8%AD%E6%96%87"));
+        assert!(addr.contains("dir=%2Ftest+dir"));
+        assert!(addr.contains("access_token=test_token"));
+    }
+
+    #[test]
+    fn test_get_addr_with_file_info_params() {
+        let api = YunApi::new("test_token");
+        let params = GetFileInfoParams {
+            fsids: vec![123, 456],
+            dlink: 1,
+            extra: 1,
+        };
+        let addr = api.get_addr(YunNode::GetFileInfo, &params);
+        assert!(addr.contains("fsids=%5B123%2C456%5D"));
+        assert!(addr.contains("dlink=1"));
+        assert!(addr.contains("extra=1"));
+        assert!(addr.contains("access_token=test_token"));
+    }
+
+    #[test]
+    fn test_get_addr_with_quota_info() {
+        let api = YunApi::new("test_token");
+        let params = EmptyParams;
+        let addr = api.get_addr(YunNode::GetQuotaInfo, &params);
+        assert_eq!(
+            addr,
+            "https://pan.baidu.com/api/quota?checkfree=1&checkexpire=1&access_token=test_token"
+        );
     }
 }
