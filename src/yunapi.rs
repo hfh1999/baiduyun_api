@@ -61,9 +61,12 @@ enum YunNode {
     GetFileList,
     GetFileInfo,
     Search,
-    PreCreate, // 三步上传,1st
-    UpLoad,    //2ed
-    Create,    //3rd
+    #[allow(dead_code)]
+    PreCreate, // 三步上传,1st，
+    #[allow(dead_code)]
+    UpLoad, //2ed
+    #[allow(dead_code)]
+    Create, //3rd
 }
 
 ///要使用本api,必须使用YunApi结构体
@@ -108,7 +111,7 @@ impl YunApi {
         }
     }
     fn get_addr(&self, in_node: YunNode, args: &str) -> String {
-        let arg_vec: Vec<&str> = args.split(';').filter(|s| *s != "").collect();
+        let arg_vec: Vec<&str> = args.split(';').filter(|s| !s.is_empty()).collect();
         let node_addr = get_node_addr(in_node);
         if node_addr.contains('?') {
             let mut addr = format!("{}&access_token={}", node_addr, self.access_token);
@@ -134,14 +137,12 @@ impl YunApi {
             .send()
         {
             if let Ok(text) = send_result.text() {
-                let tmp = Ok(serde_json::from_str(&text).unwrap());
-                // debug;;;   println!("{:?}", tmp);
-                tmp
+                Ok(serde_json::from_str(&text).unwrap())
             } else {
-                return Err(ApiError::new(8989, "decode text error."));
+                Err(ApiError::from("decode text error."))
             }
         } else {
-            return Err(ApiError::new(8989, "send request error."));
+            Err(ApiError::from("send request error."))
         }
     }
     ///得到用户的基本信息
@@ -151,9 +152,9 @@ impl YunApi {
         let value = self.reqest(YunNode::GetUserInfo, "").unwrap();
         let error = value["errno"].as_i64().unwrap();
         if error == 0 {
-            return Ok(serde_json::from_value(value).unwrap());
+            Ok(serde_json::from_value(value).unwrap())
         } else {
-            return Err(ApiError::new(error, "Get User infomation error."));
+            Err(ApiError::new(error, "Get User infomation error."))
         }
     }
 
@@ -164,9 +165,9 @@ impl YunApi {
         let value = self.reqest(YunNode::GetQuotaInfo, "").unwrap();
         let error = value["errno"].as_i64().unwrap();
         if error == 0 {
-            return Ok(serde_json::from_value(value).unwrap());
+            Ok(serde_json::from_value(value).unwrap())
         } else {
-            return Err(ApiError::new(error, "Get quta infomation error."));
+            Err(ApiError::new(error, "Get quta infomation error."))
         }
     }
 
@@ -207,9 +208,9 @@ impl YunApi {
                 };
                 info_vec.push(file_info);
             }
-            return Ok(info_vec);
+            Ok(info_vec)
         } else {
-            return Err(ApiError::new(errno, "Get files info error."));
+            Err(ApiError::new(errno, "Get files info error."))
         }
     }
 
@@ -225,7 +226,7 @@ impl YunApi {
         start: i64,
         limit: i64,
     ) -> Result<FileInfoIter, ApiError> {
-        if limit < 0 || limit > 10000 {
+        if !(0..=10000).contains(&limit) {
             return Err(ApiError::new(8989, "limit arg error."));
         }
         if start < 0 {
@@ -243,9 +244,9 @@ impl YunApi {
                     serde_json::from_value(value["list"][index].clone()).unwrap();
                 file_vec.push(file_info);
             }
-            return Ok(FileInfoIter::new(file_vec));
+            Ok(FileInfoIter::new(file_vec))
         } else {
-            return Err(ApiError::new(errno, "Get files list error."));
+            Err(ApiError::new(errno, "Get files list error."))
         }
     }
 
@@ -279,7 +280,7 @@ impl YunApi {
             }
             Ok(dlink_vec)
         } else {
-            return Err(ApiError::new(errno, "Get files dlinks error."));
+            Err(ApiError::new(errno, "Get files dlinks error."))
         }
     }
 
@@ -342,9 +343,9 @@ impl YunApi {
                     serde_json::from_value(value["list"][index].clone()).unwrap();
                 search_vec.push(file_info);
             }
-            return Ok(search_vec);
+            Ok(search_vec)
         } else {
-            return Err(ApiError::new(errno, "Get files info error."));
+            Err(ApiError::new(errno, "Get files info error."))
         }
     }
 }

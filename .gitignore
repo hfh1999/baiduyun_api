@@ -1,2 +1,4 @@
 /target
 key.txt
+Cargo.lock
+/.trae

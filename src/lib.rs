@@ -101,7 +101,7 @@
 //!        myfs.chdir("学习资料/").unwrap();
 //!        println!("current dir ===> {}", myfs.pwd().unwrap());
 //!        let files = myfs.ls().unwrap();
-//!        let mut file_to_download: FilePtr = FilePtr::default();
+//!        let mut file_to_download: FileInfo = FileInfo::default();
 //!        for item in files {
 //!            if item.server_filename.contains("中文第六版@www.java1234.com.pdf") {
 //!                println!("pdf: -> {}; id ={} ", item.server_filename, item.fs_id);
@@ -109,7 +109,7 @@
 //!            }
 //!        }
 //!        let link = api.get_file_dlink(file_to_download).unwrap();
-//!        util::download(&link, "D:/test.pdf", key, true);//这里打开了debug输出
+//!        util::download(&link, "D:/test.pdf", 100, &key, true);//这里打开了debug输出
 //!    }
 //!
 //!```
@@ -205,7 +205,7 @@ pub struct FileInfo {
 }
 impl FileId for FileInfo {
     fn ret_file_id(&self) -> i64 {
-        return self.fs_id;
+        self.fs_id
     }
 }
 
@@ -219,7 +219,7 @@ impl FileId for FileInfo {
 ///- server_ctime,文件在服务器创建时间
 ///- server_mtime,文件在服务器修改时间
 ///- size,文件大小,单位B,要想要方便的进行单位转换参看[这个函数](util::human_quota())
-/// 下面几个是文件类型为图片才有效:
+///  下面几个是文件类型为图片才有效:
 ///- height 图片高度.
 ///- width 图片宽度.
 ///- date_taken 图片的拍摄时间.
@@ -253,7 +253,7 @@ pub struct SearchResult {
 
 impl FileId for SearchResult {
     fn ret_file_id(&self) -> i64 {
-        return self.fs_id;
+        self.fs_id
     }
 }
 
@@ -280,7 +280,7 @@ pub trait FileId {
 }
 impl FileId for i64 {
     fn ret_file_id(&self) -> i64 {
-        return *self;
+        *self
     }
 }
 
@@ -288,11 +288,11 @@ impl Iterator for FileInfoIter {
     type Item = FileInfo;
     fn next(&mut self) -> Option<Self::Item> {
         if self.inner_count >= self.inner_data.len() {
-            return None;
+            None
         } else {
-            let tmp = Some((&self).inner_data[self.inner_count].clone());
+            let tmp = Some(self.inner_data[self.inner_count].clone());
             self.inner_count += 1;
-            return tmp;
+            tmp
         }
     }
 }
