@@ -2,7 +2,7 @@
 
 > 分支: `fix/master-quality`
 > 日期: 2026-09-01
-> 状态: **待评审**
+> 状态: **已实施**(2026-09-01 全部阶段完成并验证,实际结果见第八节末)
 > 版本背景: 0.3.0 尚未发布,本次允许公共 API 破坏性变更
 
 ## 一、背景与动机
@@ -333,3 +333,15 @@ cargo run --example authorize -- --app-key=你的APP_KEY
 |---|---|
 | 4.1 | 本文档状态更新为"已实施",记录实际结果 |
 | 4.2 | 提交文档更新 |
+
+**实际结果(2026-09-01)**:
+
+- 阶段 1~3 全部完成,三个提交: `62a3fc5`(YunFs 修正)、`637b810`(第一批接口)、`0d6602b`(授权工具);
+- `cargo test --lib`: 56 通过 / 0 失败 / 17 ignored;`cargo test --doc`: 6 全绿;
+- 网络测试 17/17 通过(新增 4 个: mkdir_remove / mv_cp_rename / upload / YunFs 相对路径),全部带自清理,路径从 .env 读取 `BAIDU_APP_NAME` 不硬编码;
+- 实施中实测修正的文档偏差:
+  1. create 接口不传 rtype 时默认**自动重命名**(文档称默认返回冲突),故强制 `rtype=0`;
+  2. 上传冲突返回 **HTTP 400** + `error_code` 字段(非 200 + errno),`parse_response` 补充识别 `error_code`/`error_msg`;
+  3. locateupload 的 uploadid 文档标必填,**实测可省略**;
+  4. upload 路径强制 `/apps/{应用名}/` 下(31064),mkdir/filemanager 不受限;
+  5. filemanager 删除不存在的文件静默成功(实测 errno=0)。
