@@ -135,6 +135,8 @@ pub struct SearchResult {
     pub thumbs: Option<Thumbs>,
     /// 文件在云端的绝对路径
     pub path: String,
+    /// 文件名称
+    pub server_filename: String,
 }
 
 /// [FileInfo] 的迭代器,可被clone.

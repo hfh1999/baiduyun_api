@@ -560,11 +560,13 @@ mod tests {
                 "md5": "",
                 "size": 0,
                 "path": "/唱戏机",
+                "server_filename": "唱戏机",
                 "thumbs": {"icon": "https://icon", "url1": "https://u1", "url2": "https://u2", "url3": "https://u3"}
             }]
         });
         let list = YunApi::parse_list::<SearchResult>(&value).unwrap();
         assert_eq!(list.len(), 1);
+        assert_eq!(list[0].server_filename, "唱戏机");
         let thumbs = list[0].thumbs.as_ref().unwrap();
         assert_eq!(thumbs.url1.as_deref(), Some("https://u1"));
         assert_eq!(thumbs.icon.as_deref(), Some("https://icon"));

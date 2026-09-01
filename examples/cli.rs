@@ -233,7 +233,10 @@ fn cmd_search(api: &YunApi, rest: &[String]) -> Result<(), ApiError> {
     }
     println!("{:<16}  {:<30}  {}", "fs_id", "名称", "路径");
     for item in items.iter() {
-        println!("{:<16}  {:<30}  {}", item.fs_id, item.path.rsplit('/').next().unwrap_or(""), item.path);
+        println!(
+            "{:<16}  {:<30}  {}",
+            item.fs_id, item.server_filename, item.path
+        );
     }
     println!("{DIM}共 {} 条结果{RESET}", items.len());
     Ok(())

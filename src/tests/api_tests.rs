@@ -89,6 +89,7 @@ fn test_api_method_with_searchresult() {
         size: 1024,
         thumbs: None,
         path: "/test.txt".to_string(),
+        server_filename: "test.txt".to_string(),
     };
 
     // 无效 token 的请求必然返回 Err
@@ -160,13 +161,18 @@ fn test_search() {
         .search_with_key("唱戏机", "/", true, 1, 100, false)
         .expect("搜索请求应成功");
     for item in &r {
-        // 补字段确认: SearchResult.path 真实响应必有值(模型依赖此假设)
+        // 补字段确认: SearchResult.path / server_filename 真实响应必有值(模型依赖此假设)
         assert!(
             !item.path.is_empty() && item.path.starts_with('/'),
             "path 应为以 / 开头的绝对路径,实际: {}",
             item.path
         );
-        println!("item = {}, path = {}", item.fs_id, item.path);
+        assert!(
+            !item.server_filename.is_empty(),
+            "server_filename 不应为空,实际: {}",
+            item.server_filename
+        );
+        println!("item = {}, name = {}, path = {}", item.fs_id, item.server_filename, item.path);
     }
 }
 
