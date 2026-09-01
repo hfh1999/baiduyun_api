@@ -81,6 +81,7 @@ pub struct FileInfo {
 ///- height 图片高度.
 ///- width 图片宽度.
 ///- date_taken 图片的拍摄时间.
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileInfoEx {
     pub category: i64,
     pub dlink: String,
