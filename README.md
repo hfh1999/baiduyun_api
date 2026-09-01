@@ -35,6 +35,21 @@ cargo run --example authorize -- --app-key=你的APP_KEY
 会自动打开浏览器进入授权页,授权后把地址栏的完整 URL 粘贴回终端,工具自动提取
 token 并写入 `.env`(已 gitignore,不会提交)。更多用法见 [examples/authorize.rs](examples/authorize.rs)。
 
+# 演示 CLI
+
+先在项目根目录的 `.env` 中填入 access_token(可用授权工具自动生成),
+再执行命令:
+
+```bash
+cargo run --example cli -- ls /          # 列目录(表格/颜色/人性化大小)
+cargo run --example cli -- upload ./a.jpg /apps/你的应用名/a.jpg
+cargo run --example cli -- search 唱戏机
+```
+
+覆盖 user/quota/ls/mkdir/rm/mv/cp/rename/upload/search 全部常用操作。
+Git Bash 下运行需加 `MSYS_NO_PATHCONV=1` 前缀(避免 `/` 开头的参数
+被转换成 Windows 路径)。详见 [examples/cli.rs](examples/cli.rs)。
+
 # Todo
 - [ ] 提供大文件分片上传(三步上传: 预上传/分片/创建文件)
 - [ ] 提供分享服务(创建分享链接/提取码/转存)
