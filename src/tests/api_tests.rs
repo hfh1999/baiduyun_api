@@ -159,8 +159,14 @@ fn test_search() {
     let r = api
         .search_with_key("唱戏机", "/", true, 1, 100, false)
         .expect("搜索请求应成功");
-    for item in r {
-        println!("item = {}", item.fs_id);
+    for item in &r {
+        // 补字段确认: SearchResult.path 真实响应必有值(模型依赖此假设)
+        assert!(
+            !item.path.is_empty() && item.path.starts_with('/'),
+            "path 应为以 / 开头的绝对路径,实际: {}",
+            item.path
+        );
+        println!("item = {}, path = {}", item.fs_id, item.path);
     }
 }
 
@@ -383,6 +389,59 @@ fn test_yunfs_mkdir_rm_relative() {
 
 #[test]
 #[ignore]
+fn test_trait_impl_coverage() {
+    // 编译期验证 FileId/FilePath 的实现者覆盖与引用透传
+    // 无效 token 的请求必然返回 Err,断言 is_err 同时验证错误路径
+    let api = YunApi::new("test_token");
+    let file_info = FileInfo {
+        path: "/apps/test.txt".to_string(),
+        ..FileInfo::default()
+    };
+    let search_result = SearchResult {
+        path: "/apps/test.txt".to_string(),
+        ..SearchResult::default()
+    };
+    let file_info_ex = FileInfoEx {
+        category: 4,
+        dlink: "https://d.pcs.baidu.com/xxx".to_string(),
+        file_name: "test.txt".to_string(),
+        is_dir: 0,
+        server_ctime: 0,
+        server_mtime: 0,
+        size: 1024,
+        height: None,
+        width: None,
+        date_taken: None,
+        fs_id: 123,
+        path: "/apps/test.txt".to_string(),
+    };
+
+    // FileId: i64 / FileInfo / SearchResult / FileInfoEx / &T 透传
+    assert!(api.get_files_info(&[123i64]).is_err());
+    assert!(api.get_files_info(&[file_info.clone()]).is_err());
+    assert!(api.get_files_info(&[search_result.clone()]).is_err());
+    assert!(api.get_files_info(&[file_info_ex.clone()]).is_err());
+    assert!(api.get_files_info(&[&file_info]).is_err());
+    assert!(api.get_files_dlink_vec(&[&file_info]).is_err());
+    assert!(api.get_file_dlink(123i64).is_err());
+    assert!(api.get_file_dlink(&file_info).is_err());
+    assert!(api.get_file_dlink(file_info_ex.clone()).is_err());
+
+    // FilePath: str / String / FileInfo / SearchResult / FileInfoEx / &T 透传
+    assert!(api.remove(&["/apps/a.txt"]).is_err());
+    assert!(api.remove(&[file_info.clone()]).is_err());
+    assert!(api.remove(&[&file_info]).is_err());
+    assert!(api.remove(&[search_result.clone()]).is_err());
+    assert!(api.remove(&[file_info_ex.clone()]).is_err());
+    assert!(api.mv("/apps/a.txt", "/apps/dest").is_err());
+    assert!(api.mv(file_info.clone(), "/apps/dest").is_err());
+    assert!(api.mv(&file_info, "/apps/dest").is_err());
+    assert!(api.cp(file_info_ex.clone(), "/apps/dest").is_err());
+    assert!(api.rename(&search_result, "newname.txt").is_err());
+}
+
+#[test]
+#[ignore]
 fn test_user_info() {
     let Some(key) = load_key() else {
         println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
@@ -428,7 +487,17 @@ fn test_files_info_real() {
     let info = &infos[0];
     assert!(!info.file_name.is_empty(), "file_name 不应为空");
     assert!(info.dlink.starts_with("http"), "dlink 应以 http 开头");
-    println!("file_name = {}, size = {}", info.file_name, info.size);
+    // 补字段确认: FileInfoEx.fs_id / path 真实响应必有值(模型依赖此假设)
+    assert!(info.fs_id != 0, "fs_id 不应为 0,真实响应必有该字段");
+    assert!(
+        !info.path.is_empty() && info.path.starts_with('/'),
+        "path 应为以 / 开头的绝对路径,实际: {}",
+        info.path
+    );
+    println!(
+        "file_name = {}, fs_id = {}, path = {}, size = {}",
+        info.file_name, info.fs_id, info.path, info.size
+    );
 }
 
 #[test]
