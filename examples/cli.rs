@@ -89,6 +89,9 @@ fn cmd_quota(api: &YunApi) -> Result<(), ApiError> {
 
 fn cmd_ls(api: &YunApi, rest: &[String]) -> Result<(), ApiError> {
     let dir = rest.first().map(String::as_str).unwrap_or("/");
+    if dir != "/" {
+        require_absolute(dir)?;
+    }
     let list = api.get_files_list(dir, 0, 1000)?;
     let items: Vec<FileInfo> = list.collect();
     if items.is_empty() {
@@ -142,6 +145,7 @@ fn cmd_mkdir(api: &YunApi, rest: &[String]) -> Result<(), ApiError> {
     let path = rest
         .first()
         .ok_or_else(|| ApiError::from("用法: cli mkdir <路径>"))?;
+    require_absolute(path)?;
     api.mkdir(path)?;
     println!("{GREEN}已创建: {}{RESET}", path);
     Ok(())
@@ -167,6 +171,8 @@ fn cmd_mv_cp(api: &YunApi, rest: &[String], is_copy: bool) -> Result<(), ApiErro
             }))
         }
     };
+    require_absolute(from)?;
+    require_absolute(to_dir)?;
     if is_copy {
         api.cp(from, to_dir)?;
         println!("{GREEN}已复制: {from} -> {to_dir}/{RESET}");
@@ -182,6 +188,7 @@ fn cmd_rename(api: &YunApi, rest: &[String]) -> Result<(), ApiError> {
         (Some(p), Some(n)) => (p.as_str(), n.as_str()),
         _ => return Err(ApiError::from("用法: cli rename <路径> <新名称>")),
     };
+    require_absolute(path)?;
     api.rename(path, new_name)?;
     println!("{GREEN}已重命名: {path} -> {new_name}{RESET}");
     Ok(())
@@ -192,6 +199,7 @@ fn cmd_upload(api: &YunApi, rest: &[String]) -> Result<(), ApiError> {
         (Some(l), Some(r)) => (l.as_str(), r.as_str()),
         _ => return Err(ApiError::from("用法: cli upload <本地文件> <远端路径>")),
     };
+    require_absolute(remote)?;
     println!("上传中: {local} -> {remote} ...");
     let result = api.upload(local, remote, OnDup::Fail)?;
     let (_, mb, gb) = util::human_quota(result.size);
@@ -215,6 +223,9 @@ fn cmd_search(api: &YunApi, rest: &[String]) -> Result<(), ApiError> {
         .first()
         .ok_or_else(|| ApiError::from("用法: cli search <关键字> [目录]"))?;
     let dir = rest.get(1).map(String::as_str).unwrap_or("/");
+    if dir != "/" {
+        require_absolute(dir)?;
+    }
     let items = api.search_with_key(key, dir, true, 1, 100, false)?;
     if items.is_empty() {
         println!("{DIM}(无结果){RESET}");
@@ -247,6 +258,18 @@ fn print_usage() {
 }
 
 // ---------- 工具函数 ----------
+
+/// 网盘路径必须是绝对路径(以 / 开头),否则百度返回 -7
+/// (注意: 相对路径如"毕业"会被拒绝,应传 /毕业)
+fn require_absolute(path: &str) -> Result<(), ApiError> {
+    if path.starts_with('/') {
+        Ok(())
+    } else {
+        Err(ApiError::from(
+            format!("路径必须是以 / 开头的绝对路径(如 /毕业),收到: {path}").as_str(),
+        ))
+    }
+}
 
 /// 从 .env 读取 BAIDU_ACCESS_TOKEN(与测试约定一致)
 fn load_key() -> Option<String> {
