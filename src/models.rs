@@ -115,6 +115,10 @@ pub struct FileInfoEx {
     pub width: Option<i64>,
     /// 非图片类型文件不返回该字段
     pub date_taken: Option<i64>,
+    /// 文件在云端的唯一标识 ID
+    pub fs_id: i64,
+    /// 文件在云端的绝对路径
+    pub path: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -129,6 +133,8 @@ pub struct SearchResult {
     pub md5: Option<String>,
     pub size: i64,
     pub thumbs: Option<Thumbs>,
+    /// 文件在云端的绝对路径
+    pub path: String,
 }
 
 /// [FileInfo] 的迭代器,可被clone.
@@ -172,6 +178,12 @@ impl FileId for SearchResult {
     }
 }
 
+impl FileId for FileInfoEx {
+    fn ret_file_id(&self) -> i64 {
+        self.fs_id
+    }
+}
+
 impl Iterator for FileInfoIter {
     type Item = FileInfo;
     fn next(&mut self) -> Option<Self::Item> {
@@ -194,22 +206,21 @@ pub struct GetFileListParams {
 
 #[derive(Serialize)]
 pub struct GetFileInfoParams {
-    #[serde(serialize_with = "serialize_fsids")]
+    #[serde(serialize_with = "serialize_json_str")]
     pub fsids: Vec<i64>,
     pub dlink: i64,
     pub extra: i64,
 }
 
-fn serialize_fsids<S>(fsids: &[i64], serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let tmp_string: String = fsids
-        .iter()
-        .map(|x| x.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    serializer.serialize_str(&format!("[{}]", tmp_string))
+/// 把任意 Serialize 值序列化为 JSON 文本,作为 form/query 的单个字段值
+///
+/// 百度部分参数要求"整个值是一段 JSON 文本"(如 `fsids=[123,456]`、`filelist=["/a.txt"]`)。
+/// 原理:内层 serde_json 把结构变成 JSON 文本,外层 serialize_str 编码为单个参数值。
+pub(crate) fn serialize_json_str<T: Serialize, S: serde::Serializer>(
+    value: &T,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&serde_json::to_string(value).map_err(serde::ser::Error::custom)?)
 }
 
 #[derive(Serialize)]
@@ -224,3 +235,132 @@ pub struct SearchParams {
 
 #[derive(Serialize)]
 pub struct EmptyParams;
+
+///提供文件在云端的绝对路径(供 filemanager 等操作使用)
+///
+///与 [FileId](trait@FileId)(id 视角)是平行的两个视角:
+///i64 只有 id 无路径,故独立成 trait 让编译器拒绝错误用法
+pub trait FilePath {
+    fn ret_path(&self) -> String;
+}
+
+impl FilePath for String {
+    fn ret_path(&self) -> String {
+        self.clone()
+    }
+}
+
+impl FilePath for str {
+    fn ret_path(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl FilePath for FileInfo {
+    fn ret_path(&self) -> String {
+        self.path.clone()
+    }
+}
+
+impl FilePath for SearchResult {
+    fn ret_path(&self) -> String {
+        self.path.clone()
+    }
+}
+
+impl FilePath for FileInfoEx {
+    fn ret_path(&self) -> String {
+        self.path.clone()
+    }
+}
+
+/// 引用自动透传(传 &FileInfo、&String 等引用也可直接使用)
+impl<T: FilePath + ?Sized> FilePath for &T {
+    fn ret_path(&self) -> String {
+        (**self).ret_path()
+    }
+}
+
+/// 管理文件(filemanager)的 filelist 条目
+///
+/// 百度协议要求的三种形态:
+/// - delete: 纯路径字符串(支持批量)
+/// - move/copy: {path, dest, newname?}
+/// - rename: {path, newname}(一次一个)
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum FileManagerItem {
+    Delete(String),
+    MoveCopy {
+        path: String,
+        dest: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        newname: Option<String>,
+    },
+    Rename {
+        path: String,
+        newname: String,
+    },
+}
+
+/// filemanager 的 URL query 参数
+///
+/// 实测确认: opera 必须放 URL query(body 会报 errno=2)
+#[derive(Serialize)]
+pub struct FileManagerQuery {
+    pub opera: String,
+}
+
+/// filemanager 的 form body 参数
+#[derive(Serialize)]
+pub struct FileManagerParams {
+    #[serde(serialize_with = "serialize_json_str")]
+    pub filelist: Vec<FileManagerItem>,
+    #[serde(rename = "async")]
+    pub async_: i64,
+}
+
+/// 创建文件夹/创建文件(create)的 form body 参数
+#[derive(Serialize)]
+pub struct CreateParams {
+    pub path: String,
+    pub isdir: i64,
+    /// 命名策略: 0=冲突时返回错误
+    ///
+    /// 实测确认: 不传 rtype 时百度默认自动重命名,必须显式传 0 才能获得"已存在报错"语义
+    pub rtype: i64,
+}
+
+/// 上传冲突策略(百度 ondup 参数)
+#[derive(Serialize, Debug, Clone, Copy, PartialEq)]
+pub enum OnDup {
+    /// 冲突时失败(默认)
+    #[serde(rename = "fail")]
+    Fail,
+    /// 冲突时覆盖
+    #[serde(rename = "overwrite")]
+    Overwrite,
+    /// 冲突时自动重命名
+    #[serde(rename = "newcopy")]
+    NewCopy,
+}
+
+/// 上传结果(单步上传 method=upload 的响应)
+#[derive(Deserialize, Debug, Clone)]
+pub struct UploadResult {
+    pub path: String,
+    pub size: i64,
+    /// 文件 MD5(文档注明只有提交文件时才返回)
+    pub md5: Option<String>,
+    pub fs_id: i64,
+}
+
+/// locateupload(获取上传域名)的 query 参数
+#[derive(Serialize)]
+pub struct LocateUploadParams {
+    /// 固定 250528(文档标注)
+    pub appid: i64,
+    pub path: String,
+    /// 固定 2.0
+    pub upload_version: String,
+}

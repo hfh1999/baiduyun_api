@@ -11,6 +11,7 @@
 use super::ApiError;
 use super::FileInfo;
 use super::FileInfoIter;
+use super::OnDup;
 use super::YunApi;
 use std::path::PathBuf;
 
@@ -244,6 +245,47 @@ impl<'a> YunFs<'a> {
             start += list_len;
         }
         Ok(FileInfoIter::new(ret_vec))
+    }
+
+    ///创建目录(支持相对/绝对路径,与 [chdir](YunFs::chdir) 相同的路径解析规则)
+    ///
+    ///路径已存在时返回错误(errno=-8)
+    pub fn mkdir(&mut self, dir_str: &str) -> Result<(), ApiError> {
+        let resolved = self.resolve_path(dir_str)?;
+        self.api.mkdir(&resolved)
+    }
+
+    ///删除文件/目录(支持相对/绝对路径)
+    ///
+    ///注意:百度对不存在的文件静默成功
+    pub fn rm(&mut self, path: &str) -> Result<(), ApiError> {
+        let resolved = self.resolve_path(path)?;
+        self.api.remove(&[resolved])
+    }
+
+    ///移动文件/目录到目标目录(支持相对/绝对路径)
+    pub fn mv(&mut self, from: &str, to_dir: &str) -> Result<(), ApiError> {
+        let from_resolved = self.resolve_path(from)?;
+        let to_resolved = self.resolve_path(to_dir)?;
+        self.api.mv(from_resolved, &to_resolved)
+    }
+
+    ///复制文件/目录到目标目录(支持相对/绝对路径)
+    pub fn cp(&mut self, from: &str, to_dir: &str) -> Result<(), ApiError> {
+        let from_resolved = self.resolve_path(from)?;
+        let to_resolved = self.resolve_path(to_dir)?;
+        self.api.cp(from_resolved, &to_resolved)
+    }
+
+    ///上传本地文件到当前目录(与 [download](crate::util::download) 对称)
+    ///
+    ///- `local_path` 本地文件路径
+    ///- `file_name` 上传后的文件名(可含子目录,经路径解析)
+    ///
+    ///注意:上传接口要求目标位于 `/apps/{自己的应用名}/` 下
+    pub fn upload(&mut self, local_path: &str, file_name: &str) -> Result<(), ApiError> {
+        let remote = self.resolve_path(file_name)?;
+        self.api.upload(local_path, &remote, OnDup::Fail).map(|_| ())
     }
 }
 

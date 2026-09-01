@@ -19,6 +19,19 @@ fn load_key() -> Option<String> {
     })
 }
 
+/// 从环境变量/.env 读取开放平台应用名(上传接口要求路径位于 /apps/{应用名}/ 下)
+fn load_app_name() -> Option<String> {
+    if let Ok(name) = std::env::var("BAIDU_APP_NAME") {
+        return Some(name.trim().to_string());
+    }
+    let content = std::fs::read_to_string(".env").ok()?;
+    content.lines().find_map(|line| {
+        let line = line.trim();
+        line.strip_prefix("BAIDU_APP_NAME=")
+            .map(|v| v.trim().to_string())
+    })
+}
+
 #[test]
 #[ignore]
 fn test_api_method_signatures() {
@@ -75,6 +88,7 @@ fn test_api_method_with_searchresult() {
         md5: Some("abc123".to_string()),
         size: 1024,
         thumbs: None,
+        path: "/test.txt".to_string(),
     };
 
     // 无效 token 的请求必然返回 Err
@@ -198,6 +212,173 @@ fn collect_file_ids(api: &YunApi, n: usize) -> Vec<i64> {
         }
     }
     ids
+}
+
+/// 生成带随机后缀的临时测试路径(避免并发冲突与残留)
+/// 路径位于 /apps/{应用名}/ 下(上传接口要求;mkdir/filemanager 不受限,统一放这里更一致)
+fn temp_path(prefix: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let app_dir = load_app_name().unwrap_or_else(|| "bypy".to_string());
+    format!("/apps/{}/{}_{}_{}", app_dir, prefix, std::process::id(), nanos)
+}
+
+#[test]
+#[ignore]
+fn test_mkdir_remove_roundtrip() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let dir = temp_path("yunfs_mkdir");
+
+    // 创建目录并确认可列出
+    api.mkdir(&dir).expect("mkdir 应成功");
+    let list = api.get_files_list(&dir, 0, 10).expect("新建目录应可列出");
+    assert_eq!(list.count(), 0, "新建目录应为空");
+
+    // 重复创建应报错(-8 已存在)
+    let dup = api.mkdir(&dir);
+    assert!(dup.is_err(), "重复创建应失败");
+    assert_eq!(dup.unwrap_err().ret_errno(), -8, "重复创建应返回 errno=-8");
+
+    // 删除后应可重新创建(验证清理彻底)
+    api.remove(&[dir.clone()]).expect("删除应成功");
+    api.mkdir(&dir).expect("删除后应可重新创建");
+    api.remove(&[dir]).expect("清理应成功");
+}
+
+#[test]
+#[ignore]
+fn test_mv_cp_rename_roundtrip() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let base = temp_path("yunfs_move");
+    let a = format!("{}/a", base);
+    let b = format!("{}/b", base);
+
+    // 准备: 用目录作为载体(不依赖上传)
+    api.mkdir(&base).expect("创建 base 应成功");
+    api.mkdir(&a).expect("创建 a 应成功");
+    api.mkdir(&b).expect("创建 b 应成功");
+
+    // rename: a -> a_renamed
+    api.rename(&a, "a_renamed").expect("rename 应成功");
+    let a2 = format!("{}/a_renamed", base);
+    let list = api.get_files_list(&base, 0, 10).unwrap().collect::<Vec<_>>();
+    assert!(
+        list.iter().any(|f| f.server_filename == "a_renamed"),
+        "rename 后应看到 a_renamed"
+    );
+
+    // mv: a_renamed -> b/
+    api.mv(&a2, &b).expect("mv 应成功");
+    let list_b = api.get_files_list(&b, 0, 10).unwrap().collect::<Vec<_>>();
+    assert!(
+        list_b.iter().any(|f| f.server_filename == "a_renamed"),
+        "mv 后 b 下应看到 a_renamed"
+    );
+
+    // cp: b/a_renamed -> base/(复制回上层,源保留)
+    let src = format!("{}/a_renamed", b);
+    api.cp(&src, &base).expect("cp 应成功");
+    let list_base = api.get_files_list(&base, 0, 10).unwrap().collect::<Vec<_>>();
+    assert!(
+        list_base.iter().any(|f| f.server_filename == "a_renamed"),
+        "cp 后 base 下应看到 a_renamed"
+    );
+    let list_b2 = api.get_files_list(&b, 0, 10).unwrap().collect::<Vec<_>>();
+    assert!(
+        list_b2.iter().any(|f| f.server_filename == "a_renamed"),
+        "cp 后源 b/a_renamed 应保留"
+    );
+
+    // 清理
+    api.remove(&[base]).expect("清理应成功");
+}
+
+#[test]
+#[ignore]
+fn test_upload_roundtrip() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let Some(app_name) = load_app_name() else {
+        println!("skip: 缺少 BAIDU_APP_NAME(上传路径需位于 /apps/{{应用名}}/ 下)");
+        return;
+    };
+    let _ = app_name;
+    let api = YunApi::new(&key);
+    let remote = temp_path("yunfs_upload");
+
+    // 本地临时文件
+    let local = std::env::temp_dir().join(format!("baiduyun_test_{}.txt", std::process::id()));
+    std::fs::write(&local, "hello baiduyun api upload test").expect("写本地临时文件应成功");
+
+    // 上传成功
+    let result = api
+        .upload(local.to_str().unwrap(), &remote, OnDup::Fail)
+        .expect("上传应成功");
+    assert_eq!(result.path, remote, "响应的 path 应与请求一致");
+    assert!(result.size > 0, "size 应大于 0");
+    assert!(result.md5.is_some(), "上传成功应返回 md5");
+    println!("uploaded: {} ({} bytes)", result.path, result.size);
+
+    // 重复上传应报 31061(文件已存在)
+    let dup = api.upload(local.to_str().unwrap(), &remote, OnDup::Fail);
+    let dup_err = dup.expect_err("重复上传应失败");
+    assert_eq!(
+        dup_err.ret_errno(),
+        31061,
+        "重复上传应返回 errno=31061,实际: {}",
+        dup_err
+    );
+
+    // 清理: 远端文件 + 本地临时文件
+    api.remove(&[remote]).expect("清理远端文件应成功");
+    std::fs::remove_file(&local).ok();
+}
+
+#[test]
+#[ignore]
+fn test_yunfs_mkdir_rm_relative() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let base = temp_path("yunfs_fs");
+    let mut fs = util::YunFs::new(&api);
+
+    // 绝对路径创建 + 切换
+    fs.mkdir(&base).expect("mkdir 应成功");
+    fs.chdir(&base).expect("chdir 应成功");
+
+    // 相对路径创建子目录
+    fs.mkdir("sub").expect("相对路径 mkdir 应成功");
+    let list = fs.ls().expect("ls 应成功").collect::<Vec<_>>();
+    assert!(
+        list.iter().any(|f| f.server_filename == "sub"),
+        "ls 应看到 sub"
+    );
+
+    // 相对路径删除
+    fs.rm("sub").expect("相对路径 rm 应成功");
+    let list2 = fs.ls().expect("ls 应成功").collect::<Vec<_>>();
+    assert!(
+        !list2.iter().any(|f| f.server_filename == "sub"),
+        "rm 后不应再看到 sub"
+    );
+
+    // 清理
+    fs.rm(&base).expect("清理应成功");
 }
 
 #[test]
