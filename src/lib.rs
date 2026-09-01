@@ -130,7 +130,7 @@ mod models;
 pub mod util;
 mod yunapi;
 
-pub use models::{UserInfo, QuotaInfo, FileInfo, FileInfoEx, SearchResult, FileInfoIter, FileId};
+pub use models::{UserInfo, QuotaInfo, FileInfo, FileInfoEx, SearchResult, FileInfoIter, FileId, Thumbs};
 
 #[cfg(test)]
 mod tests;

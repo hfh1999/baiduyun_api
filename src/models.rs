@@ -34,6 +34,21 @@ pub struct QuotaInfo {
     pub free: i64,
 }
 
+///缩略图信息结构体
+///
+///百度 list/search 接口返回的 `thumbs` 字段实际是对象(官方文档参数表标注为 string,与示例矛盾,实测为对象):
+///- icon,小尺寸缩略图
+///- url1/url2/url3,三个尺寸的缩略图URL
+///
+///目录等无缩略图条目返回空对象 `{}`,全部字段为 None
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct Thumbs {
+    pub icon: Option<String>,
+    pub url1: Option<String>,
+    pub url2: Option<String>,
+    pub url3: Option<String>,
+}
+
 ///文件信息结构体
 ///
 ///包含了以下字段：
@@ -63,7 +78,7 @@ pub struct FileInfo {
     pub server_filename: String,
     pub md5: Option<String>,
     pub size: i64,
-    pub thumbs: Option<String>,
+    pub thumbs: Option<Thumbs>,
     pub dir_empty: Option<i64>,
 }
 
@@ -106,7 +121,7 @@ pub struct SearchResult {
     pub server_mtime: i64,
     pub md5: Option<String>,
     pub size: i64,
-    pub thumbs: Option<String>,
+    pub thumbs: Option<Thumbs>,
 }
 
 /// [FileInfo] 的迭代器,可被clone.

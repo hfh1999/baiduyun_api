@@ -339,6 +339,31 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_list_search_result_with_thumbs_object() {
+        // 真实百度响应:thumbs 是对象而非字符串(官方文档参数表与示例矛盾,实测为对象)
+        let value = serde_json::json!({
+            "errno": 0,
+            "list": [{
+                "category": 6,
+                "fs_id": 100613,
+                "isdir": 1,
+                "local_ctime": 1586248549,
+                "local_mtime": 1586248549,
+                "server_ctime": 1586248549,
+                "server_mtime": 1712313928,
+                "md5": "",
+                "size": 0,
+                "thumbs": {"icon": "https://icon", "url1": "https://u1", "url2": "https://u2", "url3": "https://u3"}
+            }]
+        });
+        let list = YunApi::parse_list::<SearchResult>(&value).unwrap();
+        assert_eq!(list.len(), 1);
+        let thumbs = list[0].thumbs.as_ref().unwrap();
+        assert_eq!(thumbs.url1.as_deref(), Some("https://u1"));
+        assert_eq!(thumbs.icon.as_deref(), Some("https://icon"));
+    }
+
+    #[test]
     fn test_parse_list_ok() {
         let value = serde_json::json!({"errno": 0, "list": [{"a": 1}, {"a": 2}]});
         let list = YunApi::parse_list::<serde_json::Value>(&value).unwrap();
