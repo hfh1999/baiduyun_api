@@ -100,14 +100,21 @@ pub struct FileInfo {
 pub struct FileInfoEx {
     pub category: i64,
     pub dlink: String,
+    /// 真实响应字段名为 `filename`
+    #[serde(rename = "filename")]
     pub file_name: String,
+    /// 真实响应字段名为 `isdir`
+    #[serde(rename = "isdir")]
     pub is_dir: i64,
     pub server_ctime: i64,
     pub server_mtime: i64,
     pub size: i64,
-    pub height: i64,
-    pub width: i64,
-    pub date_taken: i64,
+    /// 非图片类型文件不返回该字段
+    pub height: Option<i64>,
+    /// 非图片类型文件不返回该字段
+    pub width: Option<i64>,
+    /// 非图片类型文件不返回该字段
+    pub date_taken: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
