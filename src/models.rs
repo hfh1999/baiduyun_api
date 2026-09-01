@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-///用户信息结构体,由[YunApi::get_user_info()]返回
+///用户信息结构体,由[crate::YunApi::get_user_info]返回
 ///
 ///包含了以下五个字段
 ///- baidu_name,百度账号名
@@ -17,7 +17,7 @@ pub struct UserInfo {
     pub uk: i64,
 }
 
-///配额信息结构体,由[YunApi::get_quota_info()]返回
+///配额信息结构体,由[crate::YunApi::get_quota_info]返回
 ///
 ///包含了以下四个字段
 ///- total,总空间大小
@@ -63,7 +63,7 @@ pub struct Thumbs {
 ///- server_filename,文件名称
 ///- md5,文件的md5值，只有是文件类型时，该KEY才存在
 ///- size,文件大小,单位B,要想要方便的进行单位转换参看[这个函数](crate::util::human_quota())
-///- thumbs,只有请求参数带WEB且该条目分类为图片时，该KEY才存在，包含三个尺寸的缩略图URL
+///- thumbs,只有请求参数带WEB且该条目分类为图片时,该KEY才存在,详见[Thumbs]
 ///- dir_empty,该目录是否存在子目录,只有请求参数带WEB且该条目为目录时,该KEY才存在,0为存在,1为不存在
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileInfo {
@@ -82,7 +82,7 @@ pub struct FileInfo {
     pub dir_empty: Option<i64>,
 }
 
-///拓展的文件信息结构体,由get_file_info返回.
+///拓展的文件信息结构体,由[crate::YunApi::get_files_info]返回.
 ///
 ///包含了以下字段：
 ///- category,文件类型:1 视频、2 音频、3 图片、4 文档、5 应用、6 其他、7 种子

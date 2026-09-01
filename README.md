@@ -1,60 +1,140 @@
-[![github](https://img.shields.io/badge/baiduyun__api-crate-green)](https://github.com/hfh1999/baiduyun_api/)
-# 通告
+# baiduyun_api
 
-主要更新有:
-- 版本号更新
-- 进行了一些内部优化，修复了一些bug
-- 更新了文档.
+百度网盘开放平台的 Rust 封装——读写、搜索、上传一库搞定，错误信息直透百度真实原因。
 
-需要注意的是，目前的api并**不稳定**,可能会发生不少变化,我计划到0.3.0达到稳定的api,那之后只会增加api而不会变动api
+[![github](https://img.shields.io/badge/github-hfh1999%2Fbaiduyun__api-blue)](https://github.com/hfh1999/baiduyun_api/)
+[![crates.io](https://img.shields.io/badge/crates.io-0.3.0-green)](https://crates.io/crates/baiduyun_api)
+[![docs.rs](https://img.shields.io/badge/docs.rs-baiduyun__api-orange)](https://docs.rs/baiduyun_api/)
 
-# 方便的使用官方Api
+## 特性
 
-提供了方便的Rust接口,及相关的实用设施
+- **完整的读写能力**：用户信息、空间配额、文件列表、文件信息、下载链接、关键词搜索
+- **写操作**：创建文件夹、删除、移动、复制、重命名、单步上传（≤2GB）
+- **YunFs**：类本地文件系统的抽象——`pwd`/`chdir`/`ls`/`mkdir`/`rm`/`mv`/`cp`/`upload`，支持相对路径
+- **错误直透**：百度返回的 `errno` + `errmsg` 原样传递，不再有"谜之错误文案"
+- **零 panic 设计**：网络、解析、格式异常一律返回 `Result`，不崩溃
+- **开箱即用**：授权工具自动获取 token、演示 CLI 覆盖全部常用操作
 
-我的github仓库在 [这里](https://github.com/hfh1999/baiduyun_api) ，欢迎提出你的意见.
+## 快速开始
 
-# 文档
-请看[这个文档](https://docs.rs/baiduyun_api/)，目前正在完善中
+```toml
+[dependencies]
+baiduyun_api = "0.3"
+```
 
-# 已经支持
-- [x] 提供基本的文件信息访问(容量，大小，时间，md5等)
-- [x] 提供搜索接口(使用字符串来搜索,支持递归,翻页,支持中文字符搜索)
-- [x] 提供下载链接提取(可以从get_files_info,或者是get_file_dlink_vec来获取)
-- [x] 提供云盘存储，用户基本信息访问(获取当前云盘的总容量,已用值;可以查看用户的昵称,等信息) 
-- [x] 提供写操作: 创建文件夹(mkdir)、删除(remove)、移动/复制(mv/cp)、重命名(rename)
-- [x] 提供单步上传(upload, ≤2GB, 支持冲突策略ondup)
-- [x] 提供了较为详细的报错信息.(使用ApiError类)
+```rust
+use baiduyun_api::YunApi;
 
-# 授权工具(快速获取 access_token)
+fn main() -> Result<(), baiduyun_api::ApiError> {
+    let api = YunApi::new("你的access_token");
+    let user = api.get_user_info()?;
+    println!("百度账号: {}", user.baidu_name);
+    Ok(())
+}
+```
+
+## 使用示例
+
+### 列出目录内容
+
+```rust
+let list = api.get_files_list("/apps", 0, 100)?;
+for file in list {
+    println!("{}  {}B", file.server_filename, file.size);
+}
+```
+
+### 搜索文件
+
+```rust
+// 递归搜索根目录,支持中文关键字
+let results = api.search_with_key("唱戏机", "/", true, 1, 100, false)?;
+for item in results {
+    println!("{} -> {}", item.server_filename, item.path);
+}
+```
+
+### 上传文件
+
+```rust
+use baiduyun_api::OnDup;
+
+// 注意: 上传路径必须位于 /apps/{你的应用名}/ 下(百度限制)
+let result = api.upload("./photo.jpg", "/apps/myapp/photo.jpg", OnDup::Fail)?;
+println!("上传成功: {}", result.path);
+```
+
+### 用 YunFs 像操作本地文件系统一样
+
+```rust
+use baiduyun_api::{util, YunApi};
+
+let mut fs = util::YunFs::new(&api);
+fs.chdir("学习资料/")?;
+fs.mkdir("新目录")?;        // 相对路径自动解析
+fs.upload("./a.txt", "a.txt")?;
+for item in fs.ls()? {
+    println!("{}", item.server_filename);
+}
+fs.rm("a.txt")?;
+```
+
+## 获取 access_token
+
+### 方式一：授权工具(推荐)
 
 ```bash
 cargo run --example authorize -- --app-key=你的APP_KEY
 ```
 
-会自动打开浏览器进入授权页,授权后把地址栏的完整 URL 粘贴回终端,工具自动提取
-token 并写入 `.env`(已 gitignore,不会提交)。更多用法见 [examples/authorize.rs](examples/authorize.rs)。
+自动打开浏览器完成授权，token 自动写入 `.env`（已被 gitignore，不会提交）。
+前提：在 [百度网盘开放平台](https://pan.baidu.com/union) 创建应用获取 App Key。
 
-# 演示 CLI
+### 方式二：手动
 
-先在项目根目录的 `.env` 中填入 access_token(可用授权工具自动生成),
-再执行命令:
+1. 浏览器访问 `https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&client_id=你的APP_KEY&redirect_uri=oob&scope=netdisk`
+2. 授权后地址栏会显示 `...login_success#access_token=xxx...`，复制 `access_token` 的值
+
+token 有效期 30 天，持续使用不会过期。
+
+## 演示 CLI
+
+先确保 `.env` 中有 `BAIDU_ACCESS_TOKEN`（可用授权工具生成），再执行：
 
 ```bash
-cargo run --example cli -- ls /          # 列目录(表格/颜色/人性化大小)
-cargo run --example cli -- upload ./a.jpg /apps/你的应用名/a.jpg
+cargo run --example cli -- ls /          # 列出根目录
 cargo run --example cli -- search 唱戏机
+cargo run --example cli -- upload ./a.jpg /apps/你的应用名/a.jpg
 ```
 
-覆盖 user/quota/ls/mkdir/rm/mv/cp/rename/upload/search 全部常用操作。
-Git Bash 下运行需加 `MSYS_NO_PATHCONV=1` 前缀(避免 `/` 开头的参数
-被转换成 Windows 路径)。详见 [examples/cli.rs](examples/cli.rs)。
+输出示例：
 
-# Todo
-- [ ] 提供大文件分片上传(三步上传: 预上传/分片/创建文件)
-- [ ] 提供分享服务(创建分享链接/提取码/转存)
-- [ ] 完善方便开发的设施(分页迭代器、上传进度回调等)
-- [ ] 修复 util::download 的 unwrap 链与超时配置
+```text
+名称                        大小      修改时间(UTC)        类型
+apps                      -         2026-09-01 07:59    目录
+毕业/                      -         2020-06-07 14:04    目录
+毕业.rar                   90 MB    2020-06-07 14:04    文件
+```
 
-# 远期计划
-- [ ] 上传时不限制于/app文件夹中. --> 暂时没有动工
+> Git Bash 用户注意：`/` 开头的参数会被 MSYS 转换成 Windows 路径，请加 `MSYS_NO_PATHCONV=1` 前缀运行。
+
+## API 稳定性
+
+从 **0.3.0 开始 API 稳定**：之后只增加新接口，不会变动已有接口的签名和行为。
+所有模型字段均经真实网络响应验证。
+
+## 已知限制
+
+- 上传路径必须位于 `/apps/{你的应用名}/` 下（百度接口限制，非本库可解）
+- 单步上传文件上限 2GB（更大文件需分片上传，规划中）
+- 文件列表单次最多 1000 条，`YunFs::ls` 自动翻页（大目录耗时较长）
+
+## Todo
+
+- [ ] 大文件分片上传（预上传/分片/创建文件）
+- [ ] 分享服务（创建分享链接/提取码/转存）
+- [ ] 异步 API（feature 切换，同步 API 不受影响）
+
+## License
+
+MIT

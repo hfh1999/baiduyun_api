@@ -4,9 +4,9 @@
 //!包括:
 //!- 单线程及多线程下载设施
 //!- 单位转换之设施
-//!- 目录结构之设施: [YunFs](YunFs) ,提供云端文件系统的抽象
+//!- 目录结构之设施: [YunFs],提供云端文件系统的抽象
 //!
-//!所有错误处理统一使用 [ApiError](crate::ApiError)
+//!所有错误处理统一使用 [ApiError]
 
 use super::ApiError;
 use super::FileInfo;
@@ -45,12 +45,17 @@ pub fn get_vip_type_str(vip_type: i64) -> Result<String, ApiError> {
 ///
 ///这个云目录模型模拟进行目录浏览，让我们浏览云端文件系统如同浏览本地文件系统一样
 ///
-///暂时提供以下几种操作:
+///提供以下几种操作:
 ///- 返回当前路径[pwd()](YunFs::pwd())
 ///- 切换路径[chdir()](YunFs::chdir())
-///- 列出指定路径的所有文件list
+///- 列出当前目录的所有文件[ls()](YunFs::ls())
+///- 创建目录[mkdir()](YunFs::mkdir())
+///- 删除文件/目录[rm()](YunFs::rm())
+///- 移动[mv()](YunFs::mv())
+///- 复制[cp()](YunFs::cp())
+///- 上传[upload()](YunFs::upload())
 ///
-///所有操作返回 [ApiError](crate::ApiError) 类型的错误
+///所有操作返回 [ApiError] 类型的错误
 pub struct YunFs<'a> {
     api: &'a YunApi,
     current_path: PathBuf,
@@ -227,7 +232,7 @@ impl<'a> YunFs<'a> {
         self.api.cp(from_resolved, &to_resolved)
     }
 
-    ///上传本地文件到当前目录(与 [download](crate::util::download) 对称)
+    ///上传本地文件到当前目录(与 [download] 对称)
     ///
     ///- `local_path` 本地文件路径
     ///- `file_name` 上传后的文件名(可含子目录,经路径解析)

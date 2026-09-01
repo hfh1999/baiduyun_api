@@ -187,6 +187,15 @@ impl YunApi {
     ///得到用户的基本信息
     ///
     ///返回信息的具体字段参见[UserInfo]
+    ///
+    /// # Example
+    /// ```no_run
+    /// use baiduyun_api::YunApi;
+    ///
+    /// let api = YunApi::new("你的access_token");
+    /// let user = api.get_user_info().unwrap();
+    /// println!("百度账号: {}", user.baidu_name);
+    /// ```
     pub fn get_user_info(&self) -> Result<UserInfo, ApiError> {
         let params = EmptyParams;
         let value = self.request_get(YunNode::GetUserInfo, &params)?;
@@ -233,6 +242,17 @@ impl YunApi {
     ///limit不可超过10000
     ///返回信息的具体的字段见[FileInfo]
     /// [FileInfoIter] 是一个FileInfo的迭代器.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use baiduyun_api::YunApi;
+    ///
+    /// let api = YunApi::new("你的access_token");
+    /// let list = api.get_files_list("/apps", 0, 100).unwrap();
+    /// for file in list {
+    ///     println!("{}", file.server_filename);
+    /// }
+    /// ```
     pub fn get_files_list(
         &self,
         dir: &str,
@@ -290,7 +310,7 @@ impl YunApi {
             .collect()
     }
 
-    /// 和 [get_files_dlink_vec]类似,但是只查询单个文件
+    /// 和 [Self::get_files_dlink_vec]类似,但是只查询单个文件
     ///
     /// 只有实现了[FileId] trait的类型可以用在这里
     pub fn get_file_dlink<T>(&self, file: T) -> Result<String, ApiError>

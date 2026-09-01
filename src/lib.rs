@@ -1,125 +1,104 @@
-//! 这是一个rust写成的百度云api库, **不提供**作弊功能!
+//! 百度网盘开放平台的 Rust 封装——读写、搜索、上传一库搞定,错误信息直透百度真实原因。
 //!
+//! **本库只提供官方 API 的封装,不提供任何作弊功能。**
 //!
-//!# 一,简介
-//!这个库提供方便地使用百度云官方api的方法 最新的版本请看crates.io的版本号
+//! # 特性
 //!
-//! 对用户的云盘进行访问前首先要获取access_token,具体请看官网的[这里](https://pan.baidu.com/union/document/entrance#%E6%8E%A5%E5%85%A5%E6%B5%81%E7%A8%8B)
+//! - **完整读写**:用户信息、空间配额、文件列表、文件信息、下载链接、关键词搜索
+//! - **写操作**:创建文件夹、删除、移动、复制、重命名、单步上传(≤2GB)
+//! - **[YunFs]**:类本地文件系统的抽象,支持相对路径(`pwd`/`chdir`/`ls`/`mkdir`/`rm`/`mv`/`cp`/`upload`)
+//! - **错误直透**:百度返回的 `errno` + `errmsg` 原样传递([ApiError])
+//! - **零 panic 设计**:网络、解析、格式异常一律返回 `Result`
 //!
-//! ⚠️access_token获取的方法的简要描述:
+//! # 快速开始
 //!
-//! 最开始你登录百度账号并且创建一个云盘app,获取它的APP_key
+//! ```no_run
+//! use baiduyun_api::YunApi;
 //!
-//! 在浏览器地址栏输入如下内容 其中"你的APP KEY"替换成你的APP Key
+//! let api = YunApi::new("你的access_token");
+//! let user = api.get_user_info().unwrap();
+//! println!("百度账号: {}", user.baidu_name);
+//! ```
 //!
-//! ``` https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&client_id=你的APP KEY&redirect_uri=oob&scope=netdisk```
+//! access_token 的获取方式见 [获取 access_token](#获取-accesstoken)。
 //!
-//! 然后点击授权后,会跳转到另外的一个空白网页上,此时查看地址栏上的地址大概是这样的样子:
+//! # 使用示例
 //!
-//! ```http://openapi.baidu.com/oauth/2.0/login_success#expires_in=2592000&access_token={access_token}&session_secret={session_secret}&session_key={session_key}&scope=basic+netdisk```
+//! ## 列出目录内容
 //!
-//! 其中access_token后面一段是我们需要的,保存下来即可
+//! ```no_run
+//! use baiduyun_api::YunApi;
 //!
-//! 使用期限是30天,但如果这个access_token一直在使用的话 是不会过期的,过期需要重新查询.
+//! let api = YunApi::new("你的access_token");
+//! let list = api.get_files_list("/apps", 0, 100).unwrap();
+//! for file in list {
+//!     println!("{}  {}B", file.server_filename, file.size);
+//! }
+//! ```
 //!
-//!**注意:本库不提供作弊功能!!!**
-//!# 二,功能演示
-//!## 1.列出用户信息
-//!下面是示例如何列出用户信息:
-//!```no_run
-//!use baiduyun_api::YunApi;
-//!let access_token = "User's access_token";
-//!let api = YunApi::new(access_token);
-//!let user_info = api.get_user_info().unwrap();
-//!println!("baidu_name :{}", user_info.baidu_name);
-//!println!("vip :{}", user_info.vip_type);
-//!```
+//! ## 搜索文件(支持中文关键字,递归)
 //!
-//!## 2.列出云盘信息
-//!列出云盘的存储空间信息的实例如下:
-//!```no_run
-//!use baiduyun_api::YunApi;
-//!let access_token = "User's access_token";
-//!let api = YunApi::new(access_token);
-//!let quota_info = api.get_quota_info().unwrap();
-//!println!("总空间 :{}", quota_info.total);
-//!println!("剩余空间 :{}", quota_info.free);
-//!```
+//! ```no_run
+//! use baiduyun_api::YunApi;
 //!
+//! let api = YunApi::new("你的access_token");
+//! let results = api.search_with_key("唱戏机", "/", true, 1, 100, false).unwrap();
+//! for item in results {
+//!     println!("{} -> {}", item.server_filename, item.path);
+//! }
+//! ```
 //!
+//! ## 上传文件
 //!
+//! ```no_run
+//! use baiduyun_api::{OnDup, YunApi};
 //!
-//!## 3.使用util设施
-//!我编写了一些基础设施帮助你开发自己的程序,先看看[YunFs](util::YunFs)如何使用:
-//!```no_run
-//!use baiduyun_api::YunApi;
-//!use baiduyun_api::util;
+//! let api = YunApi::new("你的access_token");
+//! // 注意: 上传路径必须位于 /apps/{你的应用名}/ 下(百度限制)
+//! let result = api.upload("./photo.jpg", "/apps/myapp/photo.jpg", OnDup::Fail).unwrap();
+//! println!("上传成功: {}", result.path);
+//! ```
 //!
-//!let access_token = "User's access_token.";
-//!let api = YunApi::new(access_token);
-//!let mut my_fs = util::YunFs::new(&api);
-//!println!("current dir:====>{}",my_fs.pwd());
-//!my_fs.chdir("../").unwrap();
-//!my_fs.chdir("/apps").unwrap();
-//!my_fs.chdir("../").unwrap();
-//!my_fs.chdir("/apps/").unwrap();
-//!my_fs.chdir("../").unwrap();
-//!my_fs.chdir("./apps/bypy/唱戏机").unwrap();
-//!let tmp_list = my_fs.ls().unwrap();
-//!for item in tmp_list{
-//!    println!("filename:{};filesize={}KB",item.server_filename,util::human_quota(item.size).0)
-//!}
-//!```
-//!结果为:
-//!```text
-//! current dir:====>/
-//! filename:45部高清黄梅戏mp4;filesize=0KB
-//! filename:黄梅戏视频;filesize=0KB
-//! filename:庐剧视频标清3;filesize=0KB
-//! filename:庐剧视频高清1;filesize=0KB
-//! filename:庐剧视频高清2;filesize=0KB
-//! filename:庐剧视频合集;filesize=0KB
-//! filename:相声小品大杂烩290部视频;filesize=0KB
-//!```
-//!再看看一个简陋的单线程下载设施[download](util::download):
-//!```no_run
-//!use baiduyun_api::{util, FileInfo, YunApi};
-//!fn download_test() {
-//!        let key = "your_access_key_to_user.";
-//!        let api = YunApi::new(key);
-//!        let mut myfs = util::YunFs::new(&api);
-//!        println!("current dir ===> {}", myfs.pwd());
-//!        myfs.chdir("学习资料/").unwrap();
-//!        println!("current dir ===> {}", myfs.pwd());
-//!        let files = myfs.ls().unwrap();
-//!        let mut file_to_download: FileInfo = FileInfo::default();
-//!        for item in files {
-//!            if item.server_filename.contains("中文第六版@www.java1234.com.pdf") {
-//!                println!("pdf: -> {}; id ={} ", item.server_filename, item.fs_id);
-//!                file_to_download = item;
-//!            }
-//!        }
-//!        let link = api.get_file_dlink(file_to_download).unwrap();
-//!        util::download(&link, "D:/test.pdf", 100, &key, true);//这里打开了debug输出
-//!    }
+//! ## 用 YunFs 像操作本地文件系统一样
 //!
-//!```
-//!结果如下:
-//!```text
-//!current dir ===> /
-//!current dir ===> /学习资料
-//!pdf: -> 数据库系统概念_中文第六版@www.java1234.com.pdf; id =816997609436448
-//!recieve data total 20 MB
-//!recieve data total 40 MB
-//!recieve data total 60 MB
-//!recieve data total 80 MB
-//!recieve data total 100 MB
-//!recieve data total 120 MB
-//!recieve data total 140 MB
-//!recieve data total 160 MB
-//!recieve data total 161 MB
-//!finish download.
-//!```
+//! ```no_run
+//! use baiduyun_api::{util, YunApi};
+//!
+//! let api = YunApi::new("你的access_token");
+//! let mut fs = util::YunFs::new(&api);
+//! fs.chdir("学习资料/").unwrap();
+//! fs.mkdir("新目录").unwrap();                    // 相对路径自动解析
+//! fs.upload("./a.txt", "a.txt").unwrap();
+//! for item in fs.ls().unwrap() {
+//!     println!("{}", item.server_filename);
+//! }
+//! fs.rm("a.txt").unwrap();
+//! ```
+//!
+//! # 获取 access_token
+//!
+//! 推荐使用授权工具(自动打开浏览器,粘贴地址栏 URL 即可自动提取写入 `.env`):
+//!
+//! ```text
+//! cargo run --example authorize -- --app-key=你的APP_KEY
+//! ```
+//!
+//! 或手动授权:浏览器访问
+//! `https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&client_id=你的APP_KEY&redirect_uri=oob&scope=netdisk`,
+//! 授权后从地址栏 `...login_success#access_token=xxx...` 提取 token。
+//!
+//! token 有效期 30 天,持续使用不会过期。
+//!
+//! # 演示 CLI
+//!
+//! ```text
+//! cargo run --example cli -- ls /
+//! cargo run --example cli -- search 唱戏机
+//! ```
+//!
+//! # API 稳定性
+//!
+//! 从 **0.3.0 开始 API 稳定**:之后只增加新接口,不会变动已有接口的签名和行为。
 
 pub use error::ApiError;
 pub use util::YunFs;
