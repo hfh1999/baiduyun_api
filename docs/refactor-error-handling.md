@@ -35,6 +35,7 @@
 - **本次改动**：`src/yunapi.rs` + `src/models.rs`（仅 `FileInfoEx` 增加 derive）。
 - **本次不改**（另开任务跟踪）：
   - `src/util.rs` 的 `download()` 存在一整条 unwrap 链（`send()` / `bytes()` / `write_all()` / 文件 `open()` / `CONTENT_LENGTH` 解析等），与本次"消除 panic"同主题，但它是 `pub fn ... -> ()`，改动必然破坏公共 API 签名，故**另开任务**；
+  - `YunApi::new` 的 reqwest client 未设置超时（`blocking::Client::new()` 默认无 timeout），网络挂起时调用会无限阻塞，建议后续任务统一配置超时（集成测试 `api_tests.rs` 同样受益）；
   - `YunFs` 的 `to_str().unwrap()` 路径为理论不可达 panic（路径均来自字符串拼接，不会非 UTF-8），暂不动。
 - `src/error.rs` 无需改动（`ApiError` 已支持 errno + custom prompt 组合）。
 
