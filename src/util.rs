@@ -63,19 +63,13 @@ impl<'a> YunFs<'a> {
         }
     }
 
-    ///返回当前的目录
+    ///返回当前的目录(本地缓存状态,不发网络请求,永不失败)
     ///
-    ///注意:每次都检查当前目录是否存在
+    ///注意:不校验云端目录是否仍然存在;目录被外部删除时,
+    ///后续 [ls](YunFs::ls) 等操作才会报错(与本地 shell 语义一致)
     ///
-    pub fn pwd(&self) -> Result<String, ApiError> {
-        let path_string: String = self.current_path.to_str().unwrap().into();
-        if self.api.get_files_list(&path_string, 0, 0).is_ok() {
-            Ok(path_string.clone())
-        } else {
-            Err(ApiError::from(
-                "Error when pwd():the directory may not exist.",
-            ))
-        }
+    pub fn pwd(&self) -> String {
+        self.current_path.to_str().unwrap().into()
     }
     fn check_dir_fmt(dir_str: &str) -> Result<(), ApiError> {
         // 以下这几种才是正确的目录形式
@@ -199,7 +193,7 @@ impl<'a> YunFs<'a> {
     }
     ///切换当前目录
     ///
-    ///该函数自动定为在线,即总是在切换目录时确认路径是否存在.
+    ///切换时在线确认目标目录存在,不存在则操作失败
     ///
     ///输入的格式有许多种如:
     ///- ".[/]"
@@ -224,16 +218,17 @@ impl<'a> YunFs<'a> {
 
     ///列出当前目录的所有文件
     ///
-    ///这个函数一次网络请求最多得到1000个文件,如果超过1000则需要发起多次网络请求，速度就会变慢.
+    ///这个函数一次网络请求最多得到1000个文件,如果超过1000则需要发起多次网络请求,速度就会变慢.
     pub fn ls(&self) -> Result<FileInfoIter, ApiError> {
         //将所有的文件都列出来
         let list_len = 1000;
         let mut ret_vec: Vec<FileInfo> = Vec::new();
+        let mut start = 0;
         loop {
             let tmp_list =
                 match self
                     .api
-                    .get_files_list(self.current_path.to_str().unwrap(), 0, list_len)
+                    .get_files_list(self.current_path.to_str().unwrap(), start, list_len)
                 {
                     Ok(list) => list,
                     Err(error) => {
@@ -243,9 +238,10 @@ impl<'a> YunFs<'a> {
             let mut tmp_vec: Vec<FileInfo> = tmp_list.collect();
             let len = tmp_vec.len();
             ret_vec.append(&mut tmp_vec);
-            if len < 1000 {
+            if len < list_len as usize {
                 break;
             }
+            start += list_len;
         }
         Ok(FileInfoIter::new(ret_vec))
     }
@@ -388,6 +384,14 @@ mod tests {
         assert_eq!(error.ret_errno(), 8989);
         let display = format!("{}", error);
         assert!(display.contains("Not Support vip_type."));
+    }
+
+    #[test]
+    fn test_yunfs_pwd_is_pure_local() {
+        // pwd 是本地状态查询: 不依赖网络、永不失败,直接返回缓存路径
+        let api = YunApi::new("test_token");
+        let fs = YunFs::new(&api);
+        assert_eq!(fs.pwd(), "/");
     }
 
     #[test]

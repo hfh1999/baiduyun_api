@@ -161,9 +161,9 @@ fn get_dlink_flow() {
     // 注意: 仅验证取链,不实际下载文件,避免覆盖本地磁盘
     let api = YunApi::new(&key);
     let mut myfs = util::YunFs::new(&api);
-    println!("current dir ===> {}", myfs.pwd().unwrap());
+    println!("current dir ===> {}", myfs.pwd());
     myfs.chdir("学习资料/").unwrap();
-    println!("current dir ===> {}", myfs.pwd().unwrap());
+    println!("current dir ===> {}", myfs.pwd());
     let files = myfs.ls().unwrap();
     let mut target: Option<FileInfo> = None;
     for item in files {
