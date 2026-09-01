@@ -12,12 +12,15 @@ enum YunNode {
     GetFileList,
     GetFileInfo,
     Search,
+    FileManager,
+    Create,
+    LocateUpload,
     #[allow(dead_code)]
     PreCreate, // 三步上传,1st，
     #[allow(dead_code)]
     UpLoad, //2ed
     #[allow(dead_code)]
-    Create, //3rd
+    Create2, //3rd
 }
 
 ///要使用本api,必须使用YunApi结构体
@@ -37,9 +40,14 @@ fn parse_response(status: reqwest::StatusCode, text: String) -> Result<Value, Ap
         });
     }
     if let Ok(value) = serde_json::from_str::<Value>(&text) {
-        if let Some(errno) = value["errno"].as_i64() {
+        // 两种错误字段:xpan 系列用 errno/errmsg,pcs 系列(upload 等)用 error_code/error_msg
+        let errno = value["errno"]
+            .as_i64()
+            .or_else(|| value["error_code"].as_i64());
+        if let Some(errno) = errno {
             let errmsg = value["errmsg"]
                 .as_str()
+                .or_else(|| value["error_msg"].as_str())
                 .unwrap_or("no errmsg from baidu")
                 .to_string();
             return Err(ApiError::new(errno, &errmsg));
@@ -64,13 +72,20 @@ fn get_node_addr(in_node: YunNode) -> String {
             String::from("https://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas")
         }
         YunNode::Search => String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=search"),
+        YunNode::FileManager => {
+            String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=filemanager")
+        }
+        YunNode::Create => String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=create"),
+        YunNode::LocateUpload => {
+            String::from("https://d.pcs.baidu.com/rest/2.0/pcs/file?method=locateupload")
+        }
         YunNode::PreCreate => {
             String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=precreate")
         }
         YunNode::UpLoad => {
             String::from("https://d.pcs.baidu.com/rest/2.0/pcs/superfile2?method=upload")
         }
-        YunNode::Create => String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=create"),
+        YunNode::Create2 => String::from("https://pan.baidu.com/rest/2.0/xpan/file?method=create"),
     }
 }
 impl YunApi {
@@ -131,7 +146,16 @@ impl YunApi {
             Err(ApiError::new(errno, &errmsg))
         }
     }
-    fn request<T: Serialize>(&self, in_node: YunNode, params: &T) -> Result<Value, ApiError> {
+    /// 解析 HTTP 响应文本为 Value(状态码检查 + JSON 解析)
+    fn parse_http_response(response: blocking::Response) -> Result<Value, ApiError> {
+        let status = response.status();
+        let text = response
+            .text()
+            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
+        parse_response(status, text)
+    }
+    /// GET 请求,参数进 query
+    fn request_get<T: Serialize>(&self, in_node: YunNode, params: &T) -> Result<Value, ApiError> {
         let addr = self.get_addr(in_node, params)?;
         let response = self
             .client
@@ -139,18 +163,33 @@ impl YunApi {
             .header(USER_AGENT, "pan.baidu.com")
             .send()
             .map_err(|e| ApiError::from(format!("send request error: {}", e).as_str()))?;
-        let status = response.status();
-        let text = response
-            .text()
-            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
-        parse_response(status, text)
+        Self::parse_http_response(response)
+    }
+    /// POST 请求,query_params 进 query、body_params 进 form body
+    ///
+    /// 实测确认:filemanager 的 opera 等参数必须放 URL query(body 会报 errno=2)
+    fn request_post<Q: Serialize, B: Serialize>(
+        &self,
+        in_node: YunNode,
+        query_params: &Q,
+        body_params: &B,
+    ) -> Result<Value, ApiError> {
+        let addr = self.get_addr(in_node, query_params)?;
+        let response = self
+            .client
+            .post(&addr)
+            .header(USER_AGENT, "pan.baidu.com")
+            .form(body_params)
+            .send()
+            .map_err(|e| ApiError::from(format!("send request error: {}", e).as_str()))?;
+        Self::parse_http_response(response)
     }
     ///得到用户的基本信息
     ///
     ///返回信息的具体字段参见[UserInfo]
     pub fn get_user_info(&self) -> Result<UserInfo, ApiError> {
         let params = EmptyParams;
-        let value = self.request(YunNode::GetUserInfo, &params)?;
+        let value = self.request_get(YunNode::GetUserInfo, &params)?;
         Self::check_errno(&value)?;
         serde_json::from_value(value)
             .map_err(|e| ApiError::from(format!("malformed user info: {}", e).as_str()))
@@ -161,7 +200,7 @@ impl YunApi {
     ///返回信息的具体的字段见[QuotaInfo]
     pub fn get_quota_info(&self) -> Result<QuotaInfo, ApiError> {
         let params = EmptyParams;
-        let value = self.request(YunNode::GetQuotaInfo, &params)?;
+        let value = self.request_get(YunNode::GetQuotaInfo, &params)?;
         Self::check_errno(&value)?;
         serde_json::from_value(value)
             .map_err(|e| ApiError::from(format!("malformed quota info: {}", e).as_str()))
@@ -183,7 +222,7 @@ impl YunApi {
             dlink,
             extra,
         };
-        let value = self.request(YunNode::GetFileInfo, &params)?;
+        let value = self.request_get(YunNode::GetFileInfo, &params)?;
         Self::check_errno(&value)?;
         Self::parse_list::<FileInfoEx>(&value)
     }
@@ -211,7 +250,7 @@ impl YunApi {
             start,
             limit,
         };
-        let value = self.request(YunNode::GetFileList, &params)?;
+        let value = self.request_get(YunNode::GetFileList, &params)?;
         Self::check_errno(&value)?;
         let list = Self::parse_list::<FileInfo>(&value)?;
         Ok(FileInfoIter::new(list))
@@ -238,7 +277,7 @@ impl YunApi {
             extra: 0,
         };
 
-        let value = self.request(YunNode::GetFileInfo, &params)?;
+        let value = self.request_get(YunNode::GetFileInfo, &params)?;
         Self::check_errno(&value)?;
         let list = Self::parse_list::<serde_json::Value>(&value)?;
         list.iter()
@@ -295,10 +334,177 @@ impl YunApi {
         if in_num > 1000 {
             return Err(ApiError::new(8989, "Num is more than 1000."));
         }
-        let value = self.request(YunNode::Search, &params)?;
+        let value = self.request_get(YunNode::Search, &params)?;
         Self::check_errno(&value)?;
         Self::parse_list::<SearchResult>(&value)
     }
+
+    ///创建文件夹
+    ///
+    ///实测确认:百度 create 接口默认对重名目录自动重命名,故强制 `rtype=0`
+    ///以获得"路径已存在即返回错误(-8)"的语义
+    pub fn mkdir(&self, path: &str) -> Result<(), ApiError> {
+        let params = CreateParams {
+            path: path.to_string(),
+            isdir: 1,
+            rtype: 0,
+        };
+        let value = self.request_post(YunNode::Create, &EmptyParams, &params)?;
+        Self::check_errno(&value)
+    }
+
+    /// filemanager 通用调用: 发送 opera 操作并检查响应(顶层 errno + info 数组单文件 errno)
+    fn filemanager(&self, opera: &str, filelist: Vec<FileManagerItem>) -> Result<(), ApiError> {
+        let query = FileManagerQuery {
+            opera: opera.to_string(),
+        };
+        let body = FileManagerParams {
+            filelist,
+            async_: 0,
+        };
+        let value = self.request_post(YunNode::FileManager, &query, &body)?;
+        Self::check_errno(&value)?;
+        // info 数组中单文件错误需要逐个检查(如部分删除失败)
+        if let Some(info) = value["info"].as_array() {
+            for item in info {
+                let errno = item["errno"].as_i64().unwrap_or(0);
+                if errno != 0 {
+                    let errmsg = item["errmsg"]
+                        .as_str()
+                        .unwrap_or("no errmsg from baidu");
+                    return Err(ApiError::new(errno, errmsg));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    ///删除文件/目录,支持批量
+    ///
+    ///可传路径字符串或实现了 [FilePath] 的类型(如 [FileInfo])
+    ///注意:百度对不存在的文件静默成功(实测返回 errno=0)
+    pub fn remove<T: FilePath>(&self, paths: &[T]) -> Result<(), ApiError> {
+        let filelist: Vec<FileManagerItem> = paths
+            .iter()
+            .map(|p| FileManagerItem::Delete(p.ret_path()))
+            .collect();
+        self.filemanager("delete", filelist)
+    }
+
+    ///移动文件/目录到目标目录
+    ///
+    ///可传路径字符串或实现了 [FilePath] 的类型(如 [FileInfo])
+    pub fn mv<T: FilePath>(&self, from: T, to_dir: &str) -> Result<(), ApiError> {
+        let filelist = vec![FileManagerItem::MoveCopy {
+            path: from.ret_path(),
+            dest: to_dir.to_string(),
+            newname: None,
+        }];
+        self.filemanager("move", filelist)
+    }
+
+    ///复制文件/目录到目标目录
+    ///
+    ///可传路径字符串或实现了 [FilePath] 的类型(如 [FileInfo])
+    pub fn cp<T: FilePath>(&self, from: T, to_dir: &str) -> Result<(), ApiError> {
+        let filelist = vec![FileManagerItem::MoveCopy {
+            path: from.ret_path(),
+            dest: to_dir.to_string(),
+            newname: None,
+        }];
+        self.filemanager("copy", filelist)
+    }
+
+    ///重命名文件/目录(一次一个)
+    ///
+    ///可传路径字符串或实现了 [FilePath] 的类型(如 [FileInfo])
+    pub fn rename<T: FilePath>(&self, path: T, new_name: &str) -> Result<(), ApiError> {
+        let filelist = vec![FileManagerItem::Rename {
+            path: path.ret_path(),
+            newname: new_name.to_string(),
+        }];
+        self.filemanager("rename", filelist)
+    }
+
+    /// 获取上传域名(单步上传前置步骤)
+    ///
+    /// 实测确认: 不传 uploadid 也可用(文档标为必填,实际可选)
+    fn get_upload_host(&self, remote_path: &str) -> Result<String, ApiError> {
+        let params = LocateUploadParams {
+            appid: 250528,
+            path: remote_path.to_string(),
+            upload_version: "2.0".to_string(),
+        };
+        let value = self.request_get(YunNode::LocateUpload, &params)?;
+        // 成功时 error_code=0,失败时带 error_msg
+        let code = value["error_code"].as_i64().unwrap_or(0);
+        if code != 0 {
+            let msg = value["error_msg"]
+                .as_str()
+                .unwrap_or("no error_msg from baidu");
+            return Err(ApiError::new(code, msg));
+        }
+        value["servers"][0]["server"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| ApiError::from("locateupload response has no servers field"))
+    }
+
+    ///上传本地文件到网盘(单步上传,限 2GB)
+    ///
+    ///- `local_path` 本地文件路径
+    ///- `remote_path` 网盘目标路径,**实测确认必须位于 `/apps/{自己的应用名}/` 下**
+    ///  (否则返回 31064 file is not authorized,与目录是否存在无关)
+    ///- `ondup` 冲突策略(默认 [OnDup::Fail]: 文件已存在报 31061)
+    ///
+    ///流程: 获取上传域名 -> multipart POST {host}/rest/2.0/pcs/file?method=upload
+    pub fn upload(
+        &self,
+        local_path: &str,
+        remote_path: &str,
+        ondup: OnDup,
+    ) -> Result<UploadResult, ApiError> {
+        let host = self.get_upload_host(remote_path)?;
+        let query = serde_urlencoded::to_string(&UploadQuery {
+            path: remote_path,
+            ondup,
+        })
+        .map_err(|e| ApiError::from(format!("serialize upload query error: {}", e).as_str()))?;
+        let upload_addr = format!(
+            "{}/rest/2.0/pcs/file?method=upload&access_token={}&{}",
+            host, self.access_token, query
+        );
+        let form = reqwest::blocking::multipart::Form::new()
+            .file("file", local_path)
+            .map_err(|e| {
+                ApiError::from(format!("open local file for upload error: {}", e).as_str())
+            })?;
+        let response = self
+            .client
+            .post(&upload_addr)
+            .header(USER_AGENT, "pan.baidu.com")
+            .multipart(form)
+            .send()
+            .map_err(|e| ApiError::from(format!("send upload request error: {}", e).as_str()))?;
+        let value = Self::parse_http_response(response)?;
+        // 上传响应的错误字段是 error_code/error_msg(非 errno)
+        let code = value["error_code"].as_i64().unwrap_or(0);
+        if code != 0 {
+            let msg = value["error_msg"]
+                .as_str()
+                .unwrap_or("no error_msg from baidu");
+            return Err(ApiError::new(code, msg));
+        }
+        serde_json::from_value(value)
+            .map_err(|e| ApiError::from(format!("malformed upload result: {}", e).as_str()))
+    }
+}
+
+/// 上传请求的 query 参数(path 需 urlencode)
+#[derive(Serialize)]
+struct UploadQuery<'a> {
+    path: &'a str,
+    ondup: OnDup,
 }
 
 #[cfg(test)]
@@ -353,6 +559,7 @@ mod tests {
                 "server_mtime": 1712313928,
                 "md5": "",
                 "size": 0,
+                "path": "/唱戏机",
                 "thumbs": {"icon": "https://icon", "url1": "https://u1", "url2": "https://u2", "url3": "https://u3"}
             }]
         });
@@ -377,7 +584,8 @@ mod tests {
                 "isdir": 0,
                 "server_ctime": 1545053884,
                 "server_mtime": 1640416420,
-                "size": 1718307682
+                "size": 1718307682,
+                "path": "/apps/LH.mkv"
             }]
         });
         let list = YunApi::parse_list::<FileInfoEx>(&value).unwrap();
@@ -386,6 +594,40 @@ mod tests {
         assert_eq!(list[0].is_dir, 0);
         assert!(list[0].dlink.starts_with("https://"));
         assert_eq!(list[0].height, None);
+    }
+
+    #[test]
+    fn test_filemanager_items_json() {
+        // filemanager 的 filelist 是 JSON 字符串: delete 为裸路径数组,
+        // mv/cp 为 {path,dest,newname?} 对象数组, rename 为 {path,newname} 数组
+        let items = vec![
+            FileManagerItem::Delete("/a.txt".to_string()),
+            FileManagerItem::MoveCopy {
+                path: "/a.txt".to_string(),
+                dest: "/dest".to_string(),
+                newname: None,
+            },
+            FileManagerItem::Rename {
+                path: "/a.txt".to_string(),
+                newname: "b.txt".to_string(),
+            },
+        ];
+        let json = serde_json::to_string(&items).unwrap();
+        assert_eq!(
+            json,
+            r#"["/a.txt",{"path":"/a.txt","dest":"/dest"},{"path":"/a.txt","newname":"b.txt"}]"#
+        );
+    }
+
+    #[test]
+    fn test_filemanager_params_form() {
+        // 表单序列化: filelist 以 JSON 字符串形式出现在 form body
+        let params = FileManagerParams {
+            filelist: vec![FileManagerItem::Delete("/a.txt".to_string())],
+            async_: 0,
+        };
+        let encoded = serde_urlencoded::to_string(&params).unwrap();
+        assert_eq!(encoded, "filelist=%5B%22%2Fa.txt%22%5D&async=0");
     }
 
     #[test]
@@ -400,6 +642,17 @@ mod tests {
     fn test_check_errno_ok() {
         let value = serde_json::json!({"errno": 0, "list": []});
         assert!(YunApi::check_errno(&value).is_ok());
+    }
+
+    #[test]
+    fn test_parse_response_http_error_with_error_code() {
+        // pcs 系列接口(upload/locateupload)的错误字段是 error_code/error_msg(非 errno)
+        let status = reqwest::StatusCode::BAD_REQUEST;
+        let text = r#"{"error_code": 31061, "error_msg": "file already exists"}"#.to_string();
+        let result = parse_response(status, text);
+        let error = result.unwrap_err();
+        assert_eq!(error.ret_errno(), 31061);
+        assert!(format!("{}", error).contains("file already exists"));
     }
 
     #[test]
