@@ -23,7 +23,8 @@ impl ApiError {
     ///
     /// # Example
     ///```
-    ///let myerror = ApiError::new("unknow error.");
+    ///use baiduyun_api::ApiError;
+    ///let myerror = ApiError::new(8989, "unknow error.");
     ///println!("{}",myerror.ret_prompt());
     ///```
     pub fn new(errno: i64, custom_info: &str) -> ApiError {

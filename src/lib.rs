@@ -26,27 +26,21 @@
 //!# 二,功能演示
 //!## 1.列出用户信息
 //!下面是示例如何列出用户信息:
-//!```
+//!```no_run
 //!use baiduyun_api::YunApi;
-//!//...
-//!//--snip--
-//!//...
-//!let api = YunApi::new();
-//!let access_token ="User's access_token";
+//!let access_token = "User's access_token";
+//!let api = YunApi::new(access_token);
 //!let user_info = api.get_user_info().unwrap();
-//!    println!("baidu_name :{}", user_info.baidu_name);
-//!    println!("vip :{}", user_info.vip_type);
+//!println!("baidu_name :{}", user_info.baidu_name);
+//!println!("vip :{}", user_info.vip_type);
 //!```
 //!
 //!## 2.列出云盘信息
 //!列出云盘的存储空间信息的实例如下:
-//!```
+//!```no_run
 //!use baiduyun_api::YunApi;
-//!//...
-//!//--snip--
-//!//...
-//!let api = YunApi::new();
-//!let access_token ="User's access_token";
+//!let access_token = "User's access_token";
+//!let api = YunApi::new(access_token);
 //!let quota_info = api.get_quota_info().unwrap();
 //!println!("总空间 :{}", quota_info.total);
 //!println!("剩余空间 :{}", quota_info.free);
@@ -57,14 +51,11 @@
 //!
 //!## 3.使用util设施
 //!我编写了一些基础设施帮助你开发自己的程序,先看看[YunFs](util::YunFs)如何使用:
-//!```
+//!```no_run
 //!use baiduyun_api::YunApi;
-//!use baiduyun_api::util
+//!use baiduyun_api::util;
 //!
-//!//...
-//!//--snip--
-//!//...
-//!let access_token ="User's access_token.";
+//!let access_token = "User's access_token.";
 //!let api = YunApi::new(access_token);
 //!let mut my_fs = util::YunFs::new(&api);
 //!println!("current dir:====>{}",my_fs.pwd().unwrap());
@@ -79,8 +70,8 @@
 //!    println!("filename:{};filesize={}KB",item.server_filename,util::human_quota(item.size).0)
 //!}
 //!```
-//!结果为:  
-//!```
+//!结果为:
+//!```text
 //! current dir:====>/
 //! filename:45部高清黄梅戏mp4;filesize=0KB
 //! filename:黄梅戏视频;filesize=0KB
@@ -91,10 +82,10 @@
 //! filename:相声小品大杂烩290部视频;filesize=0KB
 //!```
 //!再看看一个简陋的单线程下载设施[download](util::download):
-//!```
+//!```no_run
+//!use baiduyun_api::{util, FileInfo, YunApi};
 //!fn download_test() {
-//!        let key =
-//!            "your_access_key_to_user.";
+//!        let key = "your_access_key_to_user.";
 //!        let api = YunApi::new(key);
 //!        let mut myfs = util::YunFs::new(&api);
 //!        println!("current dir ===> {}", myfs.pwd().unwrap());
@@ -114,7 +105,7 @@
 //!
 //!```
 //!结果如下:
-//!```
+//!```text
 //!current dir ===> /
 //!current dir ===> /学习资料
 //!pdf: -> 数据库系统概念_中文第六版@www.java1234.com.pdf; id =816997609436448

@@ -1,7 +1,25 @@
 use crate::models::*;
+use crate::util;
 use crate::yunapi::YunApi;
 
+// 以下测试需要真实的 access_token 和网络访问,默认不运行。
+// 运行方式: cargo test -- --ignored
+
+/// 从环境变量 BAIDU_ACCESS_TOKEN 读取,回退到项目根目录的 .env 文件(见 .env.example)
+fn load_key() -> Option<String> {
+    if let Ok(key) = std::env::var("BAIDU_ACCESS_TOKEN") {
+        return Some(key.trim().to_string());
+    }
+    let content = std::fs::read_to_string(".env").ok()?;
+    content.lines().find_map(|line| {
+        let line = line.trim();
+        line.strip_prefix("BAIDU_ACCESS_TOKEN=")
+            .map(|v| v.trim().to_string())
+    })
+}
+
 #[test]
+#[ignore]
 fn test_api_method_signatures() {
     let api = YunApi::new("test_token");
 
@@ -16,6 +34,7 @@ fn test_api_method_signatures() {
 }
 
 #[test]
+#[ignore]
 fn test_api_method_with_fileinfo() {
     let api = YunApi::new("test_token");
 
@@ -41,6 +60,7 @@ fn test_api_method_with_fileinfo() {
 }
 
 #[test]
+#[ignore]
 fn test_api_method_with_searchresult() {
     let api = YunApi::new("test_token");
 
@@ -63,6 +83,7 @@ fn test_api_method_with_searchresult() {
 }
 
 #[test]
+#[ignore]
 fn test_api_method_get_file_dlink() {
     let api = YunApi::new("test_token");
 
@@ -72,6 +93,7 @@ fn test_api_method_get_file_dlink() {
 }
 
 #[test]
+#[ignore]
 fn test_api_method_get_files_dlink_vec() {
     let api = YunApi::new("test_token");
 
@@ -80,31 +102,37 @@ fn test_api_method_get_files_dlink_vec() {
     assert!(true);
 }
 
-use crate::*;
-use std::fs::read_to_string;
 #[test]
+#[ignore]
 fn test_api() {
-    // load key form file to prevent key to reveal.
-    let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
     let api = YunApi::new(&key);
     let list = api.get_files_list("/", 0, 10).unwrap();
     let list_vec: Vec<FileInfo> = list.collect();
-    assert!(list_vec.len() == 10);
+    assert_eq!(list_vec.len(), 10);
     println!("list len = {}", list_vec.len());
 }
 
 #[test]
-#[should_panic]
+#[ignore]
 fn error_key() {
-    let key =
-        "++++123.64295f7207e0dcc4612276a7955e11f9.YaWhelqaKCPDHKxghpjx7shiRLRS44h1gcl4t7-.ckQMUQ";
+    // 无效 token 应当返回错误,而不是 panic 或成功
+    let key = "invalid_access_token_for_test";
     let api = YunApi::new(key);
-    api.get_files_list("/", 0, 10).unwrap();
+    let result = api.get_files_list("/", 0, 10);
+    assert!(result.is_err(), "invalid token should produce an error");
 }
 
 #[test]
+#[ignore]
 fn test_search() {
-    let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
     let api = YunApi::new(&key);
     let r = api
         .search_with_key("唱戏机", "/", true, 1, 100, false)
@@ -115,8 +143,12 @@ fn test_search() {
 }
 
 #[test]
+#[ignore]
 fn download_test() {
-    let key = read_to_string("D:\\rust\\baiduyun_space\\baiduyun_api\\key.txt").unwrap();
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
     let api = YunApi::new(&key);
     let mut myfs = util::YunFs::new(&api);
     println!("current dir ===> {}", myfs.pwd().unwrap());
