@@ -58,7 +58,7 @@
 //!let access_token = "User's access_token.";
 //!let api = YunApi::new(access_token);
 //!let mut my_fs = util::YunFs::new(&api);
-//!println!("current dir:====>{}",my_fs.pwd().unwrap());
+//!println!("current dir:====>{}",my_fs.pwd());
 //!my_fs.chdir("../").unwrap();
 //!my_fs.chdir("/apps").unwrap();
 //!my_fs.chdir("../").unwrap();
@@ -88,9 +88,9 @@
 //!        let key = "your_access_key_to_user.";
 //!        let api = YunApi::new(key);
 //!        let mut myfs = util::YunFs::new(&api);
-//!        println!("current dir ===> {}", myfs.pwd().unwrap());
+//!        println!("current dir ===> {}", myfs.pwd());
 //!        myfs.chdir("学习资料/").unwrap();
-//!        println!("current dir ===> {}", myfs.pwd().unwrap());
+//!        println!("current dir ===> {}", myfs.pwd());
 //!        let files = myfs.ls().unwrap();
 //!        let mut file_to_download: FileInfo = FileInfo::default();
 //!        for item in files {
