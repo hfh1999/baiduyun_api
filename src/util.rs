@@ -265,7 +265,7 @@ use std::io::Write;
 ///block_size用于分段下载，若值为0则不进行分段,若值不为0则以MB为单位进行分段
 ///如果is_debug:设为true则会有简单的调试信息类似下面这样:
 ///
-///```
+///```text
 ///recieve data total 20 MB
 ///recieve data total 40 MB
 ///recieve data total 60 MB

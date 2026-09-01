@@ -2,3 +2,4 @@
 key.txt
 Cargo.lock
 /.trae
+.env
