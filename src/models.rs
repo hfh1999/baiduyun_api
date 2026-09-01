@@ -184,6 +184,13 @@ impl FileId for FileInfoEx {
     }
 }
 
+/// 引用自动透传(传 &FileInfo、&i64 等引用也可直接使用,与 [FilePath] 对称)
+impl<T: FileId + ?Sized> FileId for &T {
+    fn ret_file_id(&self) -> i64 {
+        (**self).ret_file_id()
+    }
+}
+
 impl Iterator for FileInfoIter {
     type Item = FileInfo;
     fn next(&mut self) -> Option<Self::Item> {
