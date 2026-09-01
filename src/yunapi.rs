@@ -364,6 +364,31 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_list_file_info_ex_with_real_response_shape() {
+        // 真实 filemetas 响应形状(实测):
+        // 字段名是 filename/isdir(非 file_name/is_dir),视频文件无 height/width/date_taken
+        let value = serde_json::json!({
+            "errno": 0,
+            "list": [{
+                "category": 1,
+                "dlink": "https://d.pcs.baidu.com/file/xxx",
+                "filename": "LH.mkv",
+                "fs_id": 885188,
+                "isdir": 0,
+                "server_ctime": 1545053884,
+                "server_mtime": 1640416420,
+                "size": 1718307682
+            }]
+        });
+        let list = YunApi::parse_list::<FileInfoEx>(&value).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].file_name, "LH.mkv");
+        assert_eq!(list[0].is_dir, 0);
+        assert!(list[0].dlink.starts_with("https://"));
+        assert_eq!(list[0].height, None);
+    }
+
+    #[test]
     fn test_parse_list_ok() {
         let value = serde_json::json!({"errno": 0, "list": [{"a": 1}, {"a": 2}]});
         let list = YunApi::parse_list::<serde_json::Value>(&value).unwrap();

@@ -181,3 +181,91 @@ fn get_dlink_flow() {
     );
     println!("dlink = {}", link);
 }
+
+/// 从根目录(必要时回退到"学习资料")动态收集 n 个真实文件 fs_id,避免硬编码用户数据
+fn collect_file_ids(api: &YunApi, n: usize) -> Vec<i64> {
+    let mut ids: Vec<i64> = Vec::new();
+    for dir in ["/", "/学习资料"] {
+        if let Ok(list) = api.get_files_list(dir, 0, 100) {
+            for item in list {
+                if item.isdir == 0 {
+                    ids.push(item.fs_id);
+                    if ids.len() >= n {
+                        return ids;
+                    }
+                }
+            }
+        }
+    }
+    ids
+}
+
+#[test]
+#[ignore]
+fn test_user_info() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let info = api.get_user_info().expect("get_user_info 应成功");
+    assert!(!info.baidu_name.is_empty(), "baidu_name 不应为空");
+    println!("baidu_name = {}", info.baidu_name);
+}
+
+#[test]
+#[ignore]
+fn test_quota_info() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let quota = api.get_quota_info().expect("get_quota_info 应成功");
+    assert!(quota.total > 0, "总空间应大于 0,实际: {}", quota.total);
+    assert!(quota.free >= 0, "剩余空间不应为负");
+    println!("total = {}, free = {}", quota.total, quota.free);
+}
+
+#[test]
+#[ignore]
+fn test_files_info_real() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let ids = collect_file_ids(&api, 1);
+    assert!(
+        !ids.is_empty(),
+        "网盘中未找到任何文件,无法验证 get_files_info 成功路径"
+    );
+    let infos = api
+        .get_files_info(&ids)
+        .expect("get_files_info 应成功解析真实 filemetas 响应");
+    assert_eq!(infos.len(), 1);
+    let info = &infos[0];
+    assert!(!info.file_name.is_empty(), "file_name 不应为空");
+    assert!(info.dlink.starts_with("http"), "dlink 应以 http 开头");
+    println!("file_name = {}, size = {}", info.file_name, info.size);
+}
+
+#[test]
+#[ignore]
+fn test_files_dlink_vec_real() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let ids = collect_file_ids(&api, 2);
+    assert_eq!(ids.len(), 2, "需要至少 2 个真实文件验证批量取链");
+    let links = api
+        .get_files_dlink_vec(&ids)
+        .expect("批量取链应成功");
+    assert_eq!(links.len(), 2);
+    for link in &links {
+        assert!(link.starts_with("http"), "链接应以 http 开头");
+    }
+    println!("got {} dlinks", links.len());
+}
