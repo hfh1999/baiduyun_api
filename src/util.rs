@@ -13,7 +13,7 @@ use super::FileInfo;
 use super::FileInfoIter;
 use super::OnDup;
 use super::YunApi;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 /// 提供方便的容量大小转换
 ///
@@ -73,124 +73,74 @@ impl<'a> YunFs<'a> {
         self.current_path.to_str().unwrap().into()
     }
     fn check_dir_fmt(dir_str: &str) -> Result<(), ApiError> {
-        // 以下这几种才是正确的目录形式
-        // .[/]
-        // ..[/]
-        // ./dir1/dir2[/]
-        // ../dir1/dir2[/]
-        // /dir1/dir2/dir3[/]
-        // dir1/dir2/dir3[/]
-
-        /*下面进行路径检查,使用状态机*/
-        let states = (0, 1, 2, 3, 4); //0-开始,1-开头遇到`.`,2-开头遇到`..`,3-遇到`/`,4-遇到其他字符
-        let mut c_state = states.0;
-        for item in dir_str.chars() {
-            if item == '.' {
-                if c_state == states.0 {
-                    //开头是.
-                    c_state = states.1;
-                    continue;
-                } else if c_state == states.1 {
-                    //开头是..
-                    c_state = states.2;
-                    continue;
-                } else {
-                    //error.
+        // 网盘路径是 Unix 风格: 反斜杠(Windows 分隔符)一律拒绝
+        if dir_str.contains('\\') {
+            return Err(ApiError::from(
+                "path resolve Error: `\\` not the accepted char.",
+            ));
+        }
+        // 连续 // 会被 components 折叠,需显式拒绝
+        if dir_str.contains("//") {
+            return Err(ApiError::from(
+                "path resolve Error: `/` not the correct position.",
+            ));
+        }
+        for comp in Path::new(dir_str).components() {
+            match comp {
+                Component::Normal(seg) => {
+                    // 段以 . 开头但非 . 或 ..(.a、..a 非法;那两种是 CurDir/ParentDir)
+                    if seg.to_str().unwrap_or_default().starts_with('.') {
+                        return Err(ApiError::from(
+                            "path resolve Error: `.` or `..` can not be here.",
+                        ));
+                    }
+                }
+                Component::CurDir | Component::ParentDir | Component::RootDir => {}
+                Component::Prefix(_) => {
+                    // Windows 盘符前缀(如 C:\)
                     return Err(ApiError::from(
-                        "path resolve Error: `.` not the correct position.",
+                        "path resolve Error: windows prefix not accepted.",
                     ));
                 }
-            }
-            if item == '/' {
-                if c_state != states.3 {
-                    c_state = states.3;
-                    continue;
-                } else {
-                    //error.
-                    return Err(ApiError::from(
-                        "path resolve Error: `/` not the correct position.",
-                    ));
-                }
-            } else {
-                //剩下的应该都是普通字符,特殊字符则报错
-                if item == '\\' {
-                    return Err(ApiError::from(
-                        "path resolve Error: `\\` not the accepted char.",
-                    ));
-                }
-
-                if c_state == states.1 || c_state == states.2 {
-                    return Err(ApiError::from("`.` or `..`can not be here."));
-                }
-                c_state = states.4;
-                continue;
             }
         }
         Ok(())
     }
     fn resolve_path(&self, dir_str: &str) -> Result<String, ApiError> {
-        //先检查是否符合路径规范
-        match Self::check_dir_fmt(dir_str) {
-            Ok(_) => {}
-            Err(error) => {
-                return Err(error);
-            }
-        }
+        Self::check_dir_fmt(dir_str)?;
 
-        let mut tmp_dir = String::from(dir_str);
-        if dir_str == "." || dir_str == "./" {
-            return Ok(self.current_path.to_str().unwrap().into());
-        }
-
-        if dir_str == ".." || dir_str == "../" {
-            if self.current_path.to_str().unwrap() == "/" {
-                //特殊情况,已经是系统的根了就不应该再往上找了.
-                return Ok("/".into());
+        // 段表初始化: 绝对路径从根(空表)开始,相对路径从当前路径的段开始
+        let mut segments: Vec<String> =
+            if Path::new(dir_str).components().next() == Some(Component::RootDir) {
+                Vec::new()
             } else {
-                let mut tmp_path = PathBuf::from(&self.current_path);
-                tmp_path.pop();
-                return Ok(tmp_path.to_str().unwrap().into());
+                self.current_path
+                    .to_str()
+                    .unwrap()
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect()
+            };
+
+        // 按 components 语义规约: Normal 入表,ParentDir 出表(到根自然停止)
+        for comp in Path::new(dir_str).components() {
+            match comp {
+                Component::RootDir | Component::CurDir => {}
+                Component::ParentDir => {
+                    segments.pop();
+                }
+                Component::Normal(seg) => segments.push(seg.to_str().unwrap_or_default().to_string()),
+                Component::Prefix(_) => {
+                    return Err(ApiError::from(
+                        "path resolve Error: windows prefix not accepted.",
+                    ));
+                }
             }
         }
 
-        //去除可能有的最后的`/`
-        if tmp_dir.len() != 1 && tmp_dir.ends_with("/") {
-            tmp_dir.pop();
-        }
-
-        // ../ 开头,父目录查找
-        if tmp_dir.starts_with("../") {
-            tmp_dir.remove(0);
-            tmp_dir.remove(0);
-            tmp_dir.remove(0);
-
-            if self.current_path.to_str().unwrap() == "/" {
-                //特殊情况,已经是系统的根了就不应该再往上找了.
-                let ret_string = format!("/{}", tmp_dir);
-                return Ok(ret_string);
-            } else {
-                let mut tmp_path = PathBuf::from(&self.current_path);
-                tmp_path.pop();
-                return Ok(format!("{}/{}", tmp_path.to_str().unwrap(), tmp_dir));
-            }
-        }
-        // 绝对目录查找
-        if tmp_dir.starts_with("/") {
-            return Ok(tmp_dir);
-        }
-
-        /*剩下的都是相对目录查找*/
-        // ./开头,相对目录查找
-        if tmp_dir.starts_with("./") {
-            tmp_dir.remove(0);
-            tmp_dir.remove(0);
-        }
-        if self.current_path.to_str().unwrap() == "/" {
-            //要是不处理这种特殊情况会出现解析出来为 //dir1 的情况
-            return Ok(format!("/{}", tmp_dir));
-        }
-        let ret_string = format!("{}/{}", self.current_path.to_str().unwrap(), tmp_dir);
-        Ok(ret_string)
+        // 空表 = 根目录;否则补上前导 / 构成绝对路径
+        Ok(format!("/{}", segments.join("/")))
     }
     ///切换当前目录
     ///
@@ -428,6 +378,100 @@ mod tests {
         assert!(display.contains("Not Support vip_type."));
     }
 
+    /// 构造一个 current_path 为指定路径的 YunFs(测试辅助,不涉及网络)
+    fn make_fs_at<'a>(api: &'a YunApi, path: &str) -> YunFs<'a> {
+        let mut fs = YunFs::new(api);
+        fs.current_path = PathBuf::from(path);
+        fs
+    }
+
+    #[test]
+    fn test_yunfs_resolve_current_and_parent() {
+        let api = YunApi::new("test_token");
+        let fs = make_fs_at(&api, "/apps/bypy");
+        assert_eq!(fs.resolve_path(".").unwrap(), "/apps/bypy");
+        assert_eq!(fs.resolve_path("./").unwrap(), "/apps/bypy");
+        assert_eq!(fs.resolve_path("..").unwrap(), "/apps");
+        assert_eq!(fs.resolve_path("../").unwrap(), "/apps");
+        assert_eq!(fs.resolve_path("../..").unwrap(), "/");
+    }
+
+    #[test]
+    fn test_yunfs_resolve_parent_beyond_root() {
+        // 越界父目录应停在根,不产生 /.. 之类
+        let api = YunApi::new("test_token");
+        let fs = make_fs_at(&api, "/apps/bypy");
+        assert_eq!(fs.resolve_path("../../..").unwrap(), "/");
+        let fs_root = make_fs_at(&api, "/");
+        assert_eq!(fs_root.resolve_path("..").unwrap(), "/");
+        assert_eq!(fs_root.resolve_path("../..").unwrap(), "/");
+    }
+
+    #[test]
+    fn test_yunfs_resolve_relative() {
+        let api = YunApi::new("test_token");
+        let fs = make_fs_at(&api, "/apps/bypy");
+        assert_eq!(fs.resolve_path("./dir1/dir2").unwrap(), "/apps/bypy/dir1/dir2");
+        assert_eq!(fs.resolve_path("../dir1").unwrap(), "/apps/dir1");
+        assert_eq!(fs.resolve_path("dir1/dir2").unwrap(), "/apps/bypy/dir1/dir2");
+        assert_eq!(fs.resolve_path("dir1/").unwrap(), "/apps/bypy/dir1");
+        assert_eq!(fs.resolve_path("src.txt").unwrap(), "/apps/bypy/src.txt");
+        assert_eq!(fs.resolve_path("a/../b").unwrap(), "/apps/bypy/b");
+    }
+
+    #[test]
+    fn test_yunfs_resolve_absolute() {
+        let api = YunApi::new("test_token");
+        let fs = make_fs_at(&api, "/apps/bypy");
+        assert_eq!(fs.resolve_path("/dir1/dir2").unwrap(), "/dir1/dir2");
+        assert_eq!(fs.resolve_path("/").unwrap(), "/");
+        let fs_root = make_fs_at(&api, "/");
+        assert_eq!(fs_root.resolve_path("dir1").unwrap(), "/dir1");
+        assert_eq!(fs_root.resolve_path("../dir1").unwrap(), "/dir1");
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_reject_windows_prefix() {
+        // Windows 盘符前缀(C:)被拒绝(网盘路径是 Unix 风格)
+        #[cfg(windows)]
+        {
+            let result = YunFs::check_dir_fmt("C:/dir1");
+            assert!(result.is_err());
+        }
+        // 非 Windows 平台无 Prefix 概念,C:/dir1 是普通段,跳过断言
+    }
+
+    #[test]
+    fn test_yunfs_resolve_parent_and_dir_mixed() {
+        let api = YunApi::new("test_token");
+        let fs = make_fs_at(&api, "/apps/bypy");
+        assert_eq!(fs.resolve_path("../../dir1").unwrap(), "/dir1");
+        assert_eq!(fs.resolve_path("../../a.b/dir2").unwrap(), "/a.b/dir2");
+    }
+
+    #[test]
+    fn test_yunfs_resolve_chinese_path() {
+        // 网盘场景中文路径是核心用例(如 chdir("学习资料/"))
+        let api = YunApi::new("test_token");
+        let fs = make_fs_at(&api, "/apps/bypy");
+        assert_eq!(fs.resolve_path("学习资料").unwrap(), "/apps/bypy/学习资料");
+        assert_eq!(
+            fs.resolve_path("学习资料/唱戏机").unwrap(),
+            "/apps/bypy/学习资料/唱戏机"
+        );
+        assert_eq!(fs.resolve_path("../学习资料").unwrap(), "/apps/学习资料");
+    }
+
+    #[test]
+    fn test_yunfs_resolve_invalid() {
+        let api = YunApi::new("test_token");
+        let fs = make_fs_at(&api, "/apps/bypy");
+        assert!(fs.resolve_path("..a").is_err());
+        assert!(fs.resolve_path("dir1\\dir2").is_err());
+        assert!(fs.resolve_path("//dir1").is_err());
+        assert!(fs.resolve_path(".a").is_err());
+    }
+
     #[test]
     fn test_yunfs_pwd_is_pure_local() {
         // pwd 是本地状态查询: 不依赖网络、永不失败,直接返回缓存路径
@@ -489,13 +533,23 @@ mod tests {
     }
 
     #[test]
-    fn test_yunfs_check_dir_fmt_invalid_dot_position() {
+    fn test_yunfs_check_dir_fmt_dot_in_filename() {
+        // 段中间的 `.` 是普通字符(如 src.txt、a.b.c.txt),应合法
         let result = YunFs::check_dir_fmt("dir1./dir2");
+        assert!(result.is_ok());
+        let result = YunFs::check_dir_fmt("src.txt");
+        assert!(result.is_ok());
+        let result = YunFs::check_dir_fmt("a.b.c.txt");
+        assert!(result.is_ok());
+        let result = YunFs::check_dir_fmt("/dir/sub/file.v1.2.zip");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_yunfs_check_dir_fmt_invalid_dot_start_mid() {
+        // 段开头的 `.` 只允许 . 和 ..;`..a` 这类应非法
+        let result = YunFs::check_dir_fmt("..a");
         assert!(result.is_err());
-        let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
-        let display = format!("{}", error);
-        assert!(display.contains("path resolve Error"));
     }
 
     #[test]

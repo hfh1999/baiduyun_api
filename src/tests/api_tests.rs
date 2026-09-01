@@ -442,6 +442,58 @@ fn test_trait_impl_coverage() {
 
 #[test]
 #[ignore]
+fn test_yunfs_mv_cp_upload() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let Some(_app_name) = load_app_name() else {
+        println!("skip: 缺少 BAIDU_APP_NAME(上传路径需位于 /apps/{{应用名}}/ 下)");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let base = temp_path("yunfs_mvcp");
+    let mut fs = util::YunFs::new(&api);
+
+    // 准备: 建 base 并进入,上传文件载体
+    fs.mkdir(&base).expect("mkdir 应成功");
+    fs.chdir(&base).expect("chdir 应成功");
+    let local = std::env::temp_dir().join(format!("baiduyun_yunfs_{}.txt", std::process::id()));
+    std::fs::write(&local, "yunfs mv cp upload test").expect("写本地临时文件应成功");
+    fs.upload(local.to_str().unwrap(), "src.txt")
+        .expect("fs.upload 应成功");
+    fs.mkdir("dest").expect("mkdir dest 应成功");
+
+    // mv: src.txt -> dest/(相对路径)
+    fs.mv("src.txt", "dest").expect("fs.mv 应成功");
+    let list = fs.ls().expect("ls 应成功").collect::<Vec<_>>();
+    assert!(
+        !list.iter().any(|f| f.server_filename == "src.txt"),
+        "mv 后根目录不应有 src.txt"
+    );
+
+    // cp: dest/src.txt -> ..(相对路径回到 base 根)
+    fs.chdir("dest").expect("chdir dest 应成功");
+    let list_dest = fs.ls().expect("ls 应成功").collect::<Vec<_>>();
+    assert!(
+        list_dest.iter().any(|f| f.server_filename == "src.txt"),
+        "mv 后 dest 下应有 src.txt"
+    );
+    fs.cp("src.txt", "..").expect("fs.cp 应成功");
+    fs.chdir("..").expect("chdir .. 应成功");
+    let list_root = fs.ls().expect("ls 应成功").collect::<Vec<_>>();
+    assert!(
+        list_root.iter().any(|f| f.server_filename == "src.txt"),
+        "cp 后根目录应有 src.txt(源保留)"
+    );
+
+    // 清理: 删除 base + 本地临时文件
+    fs.rm(&base).expect("清理应成功");
+    std::fs::remove_file(&local).ok();
+}
+
+#[test]
+#[ignore]
 fn test_user_info() {
     let Some(key) = load_key() else {
         println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
