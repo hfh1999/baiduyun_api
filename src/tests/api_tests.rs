@@ -580,6 +580,240 @@ fn test_files_dlink_vec_real() {
 
 #[test]
 #[ignore]
+fn test_download_resume() {
+    // 断点续传语义: 全量下载 -> 本地截断到一半(模拟中断) -> offset 续传 -> 完整且逐字节一致
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let Some(app_name) = load_app_name() else {
+        println!("skip: 缺少 BAIDU_APP_NAME(上传路径需位于 /apps/{{应用名}}/ 下)");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let remote = temp_path("yunfs_resume");
+    let local_dst = std::env::temp_dir().join(format!("baiduyun_resume_{}.txt", std::process::id()));
+
+    // 上传 256KB 全字节值内容(大于单块,保证跨缓冲边界)
+    let content: Vec<u8> = (0..=255u8).collect::<Vec<_>>().repeat(1024);
+    let local_src = std::env::temp_dir().join(format!("baiduyun_resume_src_{}.txt", std::process::id()));
+    std::fs::write(&local_src, &content).expect("写本地临时文件应成功");
+    api.upload(local_src.to_str().unwrap(), &remote, OnDup::Fail)
+        .expect("上传应成功");
+
+    // 取链
+    let parent_dir = format!("/apps/{app_name}");
+    let file_name = remote.rsplit('/').next().unwrap().to_string();
+    let list = api
+        .get_files_list(&parent_dir, 0, 1000)
+        .expect("列表应成功")
+        .collect::<Vec<_>>();
+    let file = list
+        .iter()
+        .find(|f| f.server_filename == file_name)
+        .expect("上传后应能找到该文件");
+    let dlink = api.get_file_dlink(file).expect("取链应成功");
+
+    // 首次全量下载(truncate 路径)
+    let bytes = api
+        .download_with(&dlink, local_dst.to_str().unwrap(), DownloadOpts::default())
+        .expect("首次下载应成功");
+    assert_eq!(bytes as usize, content.len());
+    assert_eq!(
+        std::fs::read(&local_dst).unwrap(),
+        content,
+        "首次下载应完整一致"
+    );
+
+    // 模拟中断: 本地文件截断到一半
+    let half = content.len() / 2;
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&local_dst)
+        .expect("打开本地文件应成功");
+    f.set_len(half as u64).expect("截断应成功");
+
+    // offset 续传(206 -> append 路径)
+    let resumed = api
+        .download_with(
+            &dlink,
+            local_dst.to_str().unwrap(),
+            DownloadOpts { offset: half as u64, threads: 1 },
+        )
+        .expect("断点续传应成功");
+    assert_eq!(
+        resumed as usize,
+        content.len() - half,
+        "续传应只下载剩余部分"
+    );
+    assert_eq!(
+        std::fs::read(&local_dst).unwrap(),
+        content,
+        "续传后文件应恢复完整且逐字节一致"
+    );
+    println!("download resume ok: 续传 {} bytes 后完整一致", resumed);
+
+    // 清理
+    api.remove(&[remote]).expect("清理远端应成功");
+    std::fs::remove_file(&local_src).ok();
+    std::fs::remove_file(&local_dst).ok();
+}
+
+#[test]
+#[ignore]
+fn test_download_parallel() {
+    // 分块并发正确性: threads=8 下载 -> 各块 seek 拼接 -> 逐字节一致
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let Some(app_name) = load_app_name() else {
+        println!("skip: 缺少 BAIDU_APP_NAME(上传路径需位于 /apps/{{应用名}}/ 下)");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let remote = temp_path("yunfs_par");
+    let local_dst = std::env::temp_dir().join(format!("baiduyun_par_{}.txt", std::process::id()));
+
+    // 1MB 全字节值内容(8 块 × 128KB)
+    let content: Vec<u8> = (0..=255u8).collect::<Vec<_>>().repeat(4096);
+    let local_src = std::env::temp_dir().join(format!("baiduyun_par_src_{}.txt", std::process::id()));
+    std::fs::write(&local_src, &content).expect("写本地临时文件应成功");
+    api.upload(local_src.to_str().unwrap(), &remote, OnDup::Fail)
+        .expect("上传应成功");
+
+    let parent_dir = format!("/apps/{app_name}");
+    let file_name = remote.rsplit('/').next().unwrap().to_string();
+    let list = api
+        .get_files_list(&parent_dir, 0, 1000)
+        .expect("列表应成功")
+        .collect::<Vec<_>>();
+    let file = list
+        .iter()
+        .find(|f| f.server_filename == file_name)
+        .expect("上传后应能找到该文件");
+    let dlink = api.get_file_dlink(file).expect("取链应成功");
+
+    let bytes = api
+        .download_with(
+            &dlink,
+            local_dst.to_str().unwrap(),
+            DownloadOpts { offset: 0, threads: 8 },
+        )
+        .expect("分块并发下载应成功");
+    assert_eq!(bytes as usize, content.len(), "并发下载字节数应完整");
+    assert_eq!(
+        std::fs::read(&local_dst).unwrap(),
+        content,
+        "并发分块拼接后应逐字节一致"
+    );
+    println!("download parallel(8线程) ok: {} bytes 拼接一致", bytes);
+
+    // 清理
+    api.remove(&[remote]).expect("清理远端应成功");
+    std::fs::remove_file(&local_src).ok();
+    std::fs::remove_file(&local_dst).ok();
+}
+
+#[test]
+#[ignore]
+fn test_yunfs_download_dir() {
+    // 目录递归下载: 建目录树(a.txt + sub/b.txt) -> download_dir 到本地 -> 结构与内容一致 -> 自清理
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let Some(app_name) = load_app_name() else {
+        println!("skip: 缺少 BAIDU_APP_NAME(上传路径需位于 /apps/{{应用名}}/ 下)");
+        return;
+    };
+    let _ = app_name;
+    let api = YunApi::new(&key);
+    let base = temp_path("yunfs_dir");
+    let mut fs = util::YunFs::new(&api);
+    fs.mkdir(&base).expect("mkdir 应成功");
+    fs.chdir(&base).expect("chdir 应成功");
+
+    // 建目录树: a.txt + sub/b.txt
+    let local_a = std::env::temp_dir().join(format!("yunfs_dir_a_{}.txt", std::process::id()));
+    let local_b = std::env::temp_dir().join(format!("yunfs_dir_b_{}.txt", std::process::id()));
+    std::fs::write(&local_a, b"content of file a").unwrap();
+    std::fs::write(&local_b, b"content of file b in sub dir").unwrap();
+    fs.upload(local_a.to_str().unwrap(), "a.txt").expect("上传 a.txt 应成功");
+    fs.mkdir("sub").expect("mkdir sub 应成功");
+    fs.upload(local_b.to_str().unwrap(), "sub/b.txt").expect("上传 sub/b.txt 应成功");
+
+    // 递归下载到本地临时目录
+    let local_root = std::env::temp_dir().join(format!("yunfs_dir_out_{}", std::process::id()));
+    let bytes = fs
+        .download_dir(".", local_root.to_str().unwrap())
+        .expect("download_dir 应成功");
+    assert_eq!(
+        bytes as usize,
+        b"content of file a".len() + b"content of file b in sub dir".len(),
+        "总字节数应为两个文件之和"
+    );
+    // 结构与内容校验
+    let got_a = std::fs::read(local_root.join("a.txt")).expect("本地 a.txt 应存在");
+    assert_eq!(got_a, b"content of file a");
+    let got_b = std::fs::read(local_root.join("sub").join("b.txt")).expect("本地 sub/b.txt 应存在");
+    assert_eq!(got_b, b"content of file b in sub dir");
+    println!("download_dir ok: 目录树镜像一致, 共 {} bytes", bytes);
+
+    // 清理: 远端 + 本地
+    fs.rm(&base).expect("清理远端应成功");
+    std::fs::remove_file(&local_a).ok();
+    std::fs::remove_file(&local_b).ok();
+    std::fs::remove_dir_all(&local_root).ok();
+}
+
+#[test]
+#[ignore]
+fn test_yunfs_download() {
+    // YunFs 下载闭环: 上传 -> chdir -> fs.download(文件名, 本地) -> 字节一致 -> 自清理
+    // 顺带覆盖: 下载不存在的文件应报错(在线定位语义)
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let Some(app_name) = load_app_name() else {
+        println!("skip: 缺少 BAIDU_APP_NAME(上传路径需位于 /apps/{{应用名}}/ 下)");
+        return;
+    };
+    let _ = app_name;
+    let api = YunApi::new(&key);
+    let base = temp_path("yunfs_dl");
+    let mut fs = util::YunFs::new(&api);
+    fs.mkdir(&base).expect("mkdir 应成功");
+    fs.chdir(&base).expect("chdir 应成功");
+
+    let content = b"yunfs download roundtrip: hello from cloud".to_vec();
+    let local_src = std::env::temp_dir().join(format!("yunfs_dl_src_{}.txt", std::process::id()));
+    let local_dst = std::env::temp_dir().join(format!("yunfs_dl_dst_{}.txt", std::process::id()));
+    std::fs::write(&local_src, &content).expect("写本地临时文件应成功");
+
+    fs.upload(local_src.to_str().unwrap(), "src.txt")
+        .expect("fs.upload 应成功");
+    let bytes = fs
+        .download("src.txt", local_dst.to_str().unwrap())
+        .expect("fs.download 应成功");
+    assert_eq!(bytes as usize, content.len(), "下载字节数应与上传一致");
+    let downloaded = std::fs::read(&local_dst).expect("读回本地文件应成功");
+    assert_eq!(downloaded, content, "下载内容应与上传内容一致");
+
+    // 不存在的文件应报错(YunFs 在线定位语义)
+    let not_found = fs.download("no_such_file.txt", local_dst.to_str().unwrap());
+    assert!(not_found.is_err(), "下载不存在的文件应失败");
+
+    // 清理: 远端目录 + 本地临时文件
+    fs.rm(&base).expect("清理应成功");
+    std::fs::remove_file(&local_src).ok();
+    std::fs::remove_file(&local_dst).ok();
+    println!("yunfs download roundtrip ok: {} bytes", bytes);
+}
+
+#[test]
+#[ignore]
 fn test_download_roundtrip() {
     // 全库下载链路唯一闭环测试(补盲区):
     // 上传内容已知文件 -> 取 dlink -> download 流式落盘 -> 读回逐字节一致 -> 自清理

@@ -2,7 +2,7 @@
 
 > 分支: `feat/split-upload`
 > 日期: 2026-09-02
-> 状态: **部分实施**——引擎层 v1(`YunApi::download`)已完成;其余 v1(YunFs)待实施、v2 未排期(见第七节)
+> 状态: **已实施**(v1 + v2 全部完成,实际结果见第七节末)
 > 版本背景: 0.3.1 已发布。0.3.0 起承诺 API 稳定(只增不改):本方案新增 API,旧 `util::download` 保留仅废弃
 
 ## 一、背景与动机
@@ -221,6 +221,16 @@ pub fn download(&mut self, file_name: &str, local: &str) -> Result<u64, ApiError
 |---|---|
 | 3.1 | 本文档状态更新为"已实施",记录实际结果 |
 | 3.2 | 提交文档 |
+
+**实际结果(2026-09-02)**:
+
+- 阶段 1~3 全部完成,一次统一提交;
+- 交付:`YunApi::download`(v1)、`YunApi::download_with`(offset 断点续传 + threads 分块并发,含 `DownloadOpts`)、`YunFs::download`、`YunFs::download_dir`(递归镜像 + fs_id 对齐批量取链)、`util::download` 废弃;
+- 实施中实测修正:
+  1. **并发测速**:单连接 3.9-4.3MB/s,8 连接 5.1MB/s(加速 ~1.3x 封顶)——百度有聚合带宽限制(本地基线 7.0MB/s);threads 保留(温和收益);
+  2. **UA 风控**:API 签发的 dlink 配浏览器 UA 触发 403(31326 hitcode:119),`pan.baidu.com` UA 是白名单——维持现状,勿"优化"成浏览器 UA;
+  3. **批量取链顺序**:百度 filemetas 响应可能按 fs_id 排序而非请求顺序——`download_dir` 按 fs_id 对齐(勿用 zip 假设顺序);
+- 测试:`cargo test` lib 68 + doc 9 全绿;网络测试 **24/24**(55s 单线程)含 download_roundtrip / yunfs_download / download_resume / download_parallel(8线程) / download_dir 五个下载闭环。
 
 ## 八、已确认小决策
 

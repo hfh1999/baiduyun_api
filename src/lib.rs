@@ -41,6 +41,7 @@
 //! for item in fs.ls().unwrap() {
 //!     println!("{}", item.server_filename);
 //! }
+//! fs.download("a.txt", "./a.txt").unwrap();   // 下载到本地(已存在会被覆盖)
 //! fs.rm("a.txt").unwrap();
 //! ```
 //!
@@ -113,7 +114,7 @@ mod models;
 pub mod util;
 mod yunapi;
 
-pub use models::{UserInfo, QuotaInfo, FileInfo, FileInfoEx, SearchResult, FileInfoIter, FileId, Thumbs, FilePath, OnDup, UploadResult};
+pub use models::{UserInfo, QuotaInfo, FileInfo, FileInfoEx, SearchResult, FileInfoIter, FileId, Thumbs, FilePath, OnDup, UploadResult, DownloadOpts};
 
 #[cfg(test)]
 mod tests;

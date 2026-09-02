@@ -51,6 +51,7 @@ fs.upload("./a.txt", "a.txt")?;
 for item in fs.ls()? {               // 自动翻页,无需关心分页
     println!("{}", item.server_filename);
 }
+fs.download("a.txt", "./a.txt")?;    // 下载到本地(已存在会被覆盖)
 fs.rm("a.txt")?;
 ```
 

@@ -232,6 +232,114 @@ impl<'a> YunFs<'a> {
         self.api.cp(from_resolved, &to_resolved)
     }
 
+    ///下载当前目录下的文件到本地(自动定位 + 取链 + 下载)
+    ///
+    ///- `file_name` 当前目录内的文件名(需在线确认存在,与 chdir 语义一致)
+    ///- `local` 本地保存的完整文件路径;**已存在会被覆盖**
+    ///- 返回实际下载字节数,可与远端 `FileInfo.size` 对比校验
+    ///
+    ///注意: 传输引擎在 [YunApi::download](crate::YunApi::download),
+    ///本方法只做"定位 -> 取链 -> 下载"的三步编排(YunFs 文件系统语义)。
+    ///需要断点续传/并发等传输调优时,请直接使用 API 层组合。
+    pub fn download(&mut self, file_name: &str, local: &str) -> Result<u64, ApiError> {
+        let dir = self.pwd();
+        let list = self.api.get_files_list(&dir, 0, 1000)?;
+        let file = list
+            .into_iter()
+            .find(|f| f.server_filename == file_name)
+            .ok_or_else(|| ApiError::from(format!("当前目录未找到文件: {file_name}").as_str()))?;
+        let dlink = self.api.get_file_dlink(file)?;
+        self.api.download(&dlink, local)
+    }
+
+    ///递归下载远端目录到本地(同步串行,`cp -r` 语义)
+    ///
+    ///- `dir` 远端目录(相对当前目录或绝对路径);`local_dir` 本地目标目录(不存在则创建)
+    ///- 远端目录树(含空目录)完整镜像到本地;同名本地文件会被覆盖
+    ///- 取链走批量接口(`get_files_dlink_vec` 每批 100),避免逐文件请求触发频控
+    ///- 返回总下载字节数;遇错即停,已下载部分保留在本地
+    pub fn download_dir(&mut self, dir: &str, local_dir: &str) -> Result<u64, ApiError> {
+        let abs_dir = self.resolve_path(dir)?;
+        let mut files: Vec<(String, FileInfo)> = Vec::new();
+        let mut empty_dirs: Vec<String> = Vec::new();
+        Self::collect_tree(self.api, &abs_dir, "", &mut files, &mut empty_dirs)?;
+        if files.is_empty() && empty_dirs.is_empty() {
+            return Err(ApiError::from(format!("远端目录不存在: {abs_dir}").as_str()));
+        }
+
+        let root = Path::new(local_dir);
+        std::fs::create_dir_all(root)
+            .map_err(|e| ApiError::from(format!("create local dir error: {}", e).as_str()))?;
+        for d in &empty_dirs {
+            std::fs::create_dir_all(root.join(d))
+                .map_err(|e| ApiError::from(format!("create local dir error: {}", e).as_str()))?;
+        }
+
+        let mut total: u64 = 0;
+        for batch in files.chunks(100) {
+            let ids: Vec<i64> = batch.iter().map(|(_, f)| f.fs_id).collect();
+            // 用 get_files_info(带 fs_id 的 FileInfoEx)按 fs_id 对齐取链,
+            // 不依赖百度 filemetas 的响应顺序(实测可能按 fs_id 排序而非请求顺序)
+            let infos = self.api.get_files_info(&ids)?;
+            for (rel, f) in batch {
+                let link = infos
+                    .iter()
+                    .find(|e| e.fs_id == f.fs_id)
+                    .ok_or_else(|| ApiError::from("批量取链缺少文件"))?
+                    .dlink
+                    .clone();
+                let local_path = root.join(rel);
+                if let Some(parent) = local_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        ApiError::from(format!("create local dir error: {}", e).as_str())
+                    })?;
+                }
+                let local_str =
+                    local_path
+                        .to_str()
+                        .ok_or_else(|| ApiError::from("local path is not valid utf-8"))?;
+                total += self.api.download(&link, local_str)?;
+            }
+        }
+        Ok(total)
+    }
+
+    /// 递归收集远端目录树:files = (相对 local 根的路径, FileInfo),empty_dirs = 空目录的相对路径
+    fn collect_tree(
+        api: &YunApi,
+        abs_dir: &str,
+        rel: &str,
+        files: &mut Vec<(String, FileInfo)>,
+        empty_dirs: &mut Vec<String>,
+    ) -> Result<(), ApiError> {
+        let mut start = 0;
+        loop {
+            let list = api.get_files_list(abs_dir, start, 1000)?;
+            let items: Vec<FileInfo> = list.collect();
+            if items.is_empty() {
+                if start == 0 && !rel.is_empty() {
+                    empty_dirs.push(rel.to_string()); // 空目录也要在本地镜像
+                }
+                break;
+            }
+            for f in items {
+                let child_rel = if rel.is_empty() {
+                    f.server_filename.clone()
+                } else {
+                    format!("{rel}/{}", f.server_filename)
+                };
+                if f.isdir == 1 {
+                    let child_abs = format!("{abs_dir}/{}", f.server_filename);
+                    Self::collect_tree(api, &child_abs, &child_rel, files, empty_dirs)?;
+                } else {
+                    files.push((child_rel, f));
+                }
+            }
+            start += 1000;
+        }
+        Ok(())
+    }
+
     ///上传本地文件到当前目录(与 [download] 对称)
     ///
     ///- `local_path` 本地文件路径

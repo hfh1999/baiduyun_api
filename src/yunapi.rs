@@ -545,16 +545,42 @@ impl YunApi {
     /// - `dst` 本地文件路径;**已存在会被覆盖**(非续写)
     /// - 返回实际下载字节数,可与远端 `FileInfo.size` 对比校验完整性
     ///
-    /// 实现说明: 固定 64KB 缓冲流式落盘,内存占用与文件大小无关;
-    /// 下载失败时百度返回 JSON 错误体,经 `parse_response` 透传 errno(错误直透)。
+    /// 便捷入口,等价 [Self::download_with] + [DownloadOpts::default]。
     pub fn download(&self, dlink: &str, dst: &str) -> Result<u64, ApiError> {
+        self.download_with(dlink, dst, DownloadOpts::default())
+    }
+
+    /// 下载文件,支持断点续传与分块并发(自动拼接 access_token,流式落盘)
+    ///
+    /// - `offset` = 0:从头下载,已存在的 `dst` 会被覆盖(truncate)
+    /// - `offset` > 0:断点续传——从该字节偏移继续,追加写入 `dst`;
+    ///   若服务器忽略 Range 返回 200 全量,自动回退从头下载(truncate)
+    ///   (`offset` 应取上次调用返回的字节累计,配合中断后重试)
+    /// - `threads` = 1:单连接;>1:分块并发([offset, 文件尾) 切块并行拉取)
+    /// - 返回本次实际下载字节数
+    pub fn download_with(
+        &self,
+        dlink: &str,
+        dst: &str,
+        opts: DownloadOpts,
+    ) -> Result<u64, ApiError> {
+        if opts.threads <= 1 {
+            self.download_single(dlink, dst, opts.offset)
+        } else {
+            self.download_parallel(dlink, dst, opts.offset, opts.threads)
+        }
+    }
+
+    /// 单连接下载:offset=0 全量 truncate;offset>0 Range+append(200 时回退 truncate)
+    fn download_single(&self, dlink: &str, dst: &str, offset: u64) -> Result<u64, ApiError> {
         let url = Self::with_access_token(dlink, &self.access_token);
-        let mut response = self
-            .agent
-            .get(&url)
-            .header("User-Agent", "pan.baidu.com")
-            .call()
-            .map_err(|e| ApiError::from(format!("send download request error: {}", e).as_str()))?;
+        let mut request = self.agent.get(&url).header("User-Agent", "pan.baidu.com");
+        if offset > 0 {
+            request = request.header("Range", &format!("bytes={offset}-"));
+        }
+        let mut response = request.call().map_err(|e| {
+            ApiError::from(format!("send download request error: {}", e).as_str())
+        })?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             // 非 2xx:body 是 JSON 错误体(实测 403 -> {"error_code":31045,...})
@@ -564,10 +590,145 @@ impl YunApi {
                 .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
             return parse_response(status, text).map(|_| 0);
         }
-        // 流式落盘:create 即覆盖(truncate);64KB 缓冲循环,内存恒定
-        let mut file = std::fs::File::create(dst)
+        // 断点双态:206 + offset>0 -> append 续写;200(服务器忽略 Range)或从头 -> truncate
+        let resume = status == 206 && offset > 0;
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).write(true);
+        if resume {
+            options.append(true);
+        } else {
+            options.truncate(true);
+        }
+        let mut file = options
+            .open(dst)
             .map_err(|e| ApiError::from(format!("open local file error: {}", e).as_str()))?;
-        let mut reader = response.body_mut().as_reader();
+        Self::stream_to_file(response.body_mut().as_reader(), &mut file)
+    }
+
+    /// 分块并发下载:探测文件总大小 -> [offset, total) 切块 -> 多线程并行拉取,逐块定位写入
+    fn download_parallel(
+        &self,
+        dlink: &str,
+        dst: &str,
+        offset: u64,
+        threads: usize,
+    ) -> Result<u64, ApiError> {
+        let url = Self::with_access_token(dlink, &self.access_token);
+
+        // 1. 探测总大小(Range: bytes=0-0,206 时 content-range 携带 total)
+        let mut probe = self
+            .agent
+            .get(&url)
+            .header("User-Agent", "pan.baidu.com")
+            .header("Range", "bytes=0-0")
+            .call()
+            .map_err(|e| ApiError::from(format!("send download request error: {}", e).as_str()))?;
+        let status = probe.status().as_u16();
+        if !(200..300).contains(&status) {
+            let text = probe
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
+            return parse_response(status, text).map(|_| 0);
+        }
+        if status != 206 {
+            // 服务器不支持 Range:回退单连接(读完探测 body 以释放连接)
+            let _ = probe.body_mut().read_to_vec().map_err(|e| {
+                ApiError::from(format!("decode download error: {}", e).as_str())
+            })?;
+            return self.download_single(dlink, dst, offset);
+        }
+        let total: u64 = probe
+            .headers()
+            .get("content-range")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.rsplit('/').next())
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| ApiError::from("download probe: no content-range total"))?;
+        // 读完 1 字节探测 body,释放连接回池
+        let mut buf = [0u8; 64];
+        while probe.body_mut().as_reader().read(&mut buf).unwrap_or(0) > 0 {}
+        if offset >= total {
+            return Err(ApiError::from("download offset beyond file size"));
+        }
+
+        // 2. 预置文件长度(create/set_len 生成空洞文件,各块 seek 写入)
+        std::fs::File::create(dst)
+            .and_then(|f| f.set_len(total))
+            .map_err(|e| ApiError::from(format!("open local file error: {}", e).as_str()))?;
+
+        // 3. 切块并发下载
+        let len = total - offset;
+        let block_count = threads.min(len as usize).max(1);
+        let base = len / block_count as u64;
+        let mut ranges = Vec::with_capacity(block_count);
+        for i in 0..block_count as u64 {
+            let start = offset + i * base;
+            let end = if i + 1 == block_count as u64 { total } else { start + base };
+            ranges.push((start, end - start));
+        }
+        let mut downloaded: u64 = 0;
+        std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(ranges.len());
+            for (start, blk_len) in ranges {
+                let agent = &self.agent;
+                let url = &url;
+                let dst = dst;
+                handles.push(s.spawn(move || {
+                    Self::download_block(agent, url, dst, start, blk_len)
+                }));
+            }
+            for h in handles {
+                downloaded += h.join().unwrap_or_else(|_| {
+                    Err(ApiError::from("download block thread panicked"))
+                })?;
+            }
+            Ok::<_, ApiError>(())
+        })?;
+        Ok(downloaded)
+    }
+
+    /// 单块下载:Range 请求 [start, start+len),206 校验,定位写入本地文件对应偏移
+    fn download_block(
+        agent: &ureq::Agent,
+        url: &str,
+        dst: &str,
+        start: u64,
+        blk_len: u64,
+    ) -> Result<u64, ApiError> {
+        let mut response = agent
+            .get(url)
+            .header("User-Agent", "pan.baidu.com")
+            .header("Range", &format!("bytes={}-{}", start, start + blk_len - 1))
+            .call()
+            .map_err(|e| ApiError::from(format!("send download request error: {}", e).as_str()))?;
+        let status = response.status().as_u16();
+        if status != 206 {
+            let text = response
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
+            return parse_response(status, text).map(|_| 0);
+        }
+        // 定位写入(不 truncate:文件已在并行入口 set_len 预置)
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true);
+        let mut file = options
+            .open(dst)
+            .map_err(|e| ApiError::from(format!("open local file error: {}", e).as_str()))?;
+        use std::io::Seek;
+        file.seek(std::io::SeekFrom::Start(start))
+            .map_err(|e| ApiError::from(format!("seek local file error: {}", e).as_str()))?;
+        Self::stream_to_file(response.body_mut().as_reader(), &mut file)
+    }
+
+    /// 流式落盘:64KB 缓冲循环 read -> write,返回写入字节数
+    ///
+    /// 必须完整读到 EOF(ureq Agent 连接池要求 body 读净才能复用连接)
+    fn stream_to_file(
+        mut reader: impl std::io::Read,
+        file: &mut std::fs::File,
+    ) -> Result<u64, ApiError> {
         let mut buf = [0u8; 64 * 1024];
         let mut total: u64 = 0;
         loop {
@@ -782,6 +943,13 @@ mod tests {
         assert_eq!(error.ret_errno(), 8989);
         let display = format!("{}", error);
         assert!(display.contains("HTTP status 502"));
+    }
+
+    #[test]
+    fn test_yunapi_send_sync() {
+        // 编译期断言: YunApi 可跨线程共享(用户层文件级并发的前提,防未来改动破坏)
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<YunApi>();
     }
 
     #[test]

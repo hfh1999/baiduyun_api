@@ -373,3 +373,19 @@ pub struct LocateUploadParams {
     /// 固定 2.0
     pub upload_version: String,
 }
+
+/// 下载增强选项([YunApi::download_with](crate::YunApi::download_with))
+///
+/// - `offset` = 0:从头下载;>0:断点续传(从该字节偏移继续)
+/// - `threads` = 1:单连接;>1:分块并发(实测百度聚合限速约 5MB/s,并发收益 ~1.3x 封顶)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadOpts {
+    pub offset: u64,
+    pub threads: usize,
+}
+
+impl Default for DownloadOpts {
+    fn default() -> Self {
+        DownloadOpts { offset: 0, threads: 1 }
+    }
+}
