@@ -2,7 +2,6 @@
 //!
 //!一些方便开发的实用设施
 //!包括:
-//!- 单线程及多线程下载设施
 //!- 单位转换之设施
 //!- 目录结构之设施: [YunFs],提供云端文件系统的抽象
 //!
@@ -55,6 +54,7 @@ pub fn get_vip_type_str(vip_type: i64) -> Result<String, ApiError> {
 ///- 移动[mv()](YunFs::mv())
 ///- 复制[cp()](YunFs::cp())
 ///- 上传[upload()](YunFs::upload())
+///- 下载[download()](YunFs::download)/递归下载目录[download_dir()](YunFs::download_dir)
 ///
 ///所有操作返回 [ApiError] 类型的错误
 pub struct YunFs<'a> {
@@ -341,7 +341,7 @@ impl<'a> YunFs<'a> {
         Ok(())
     }
 
-    ///上传本地文件到当前目录(与 [download] 对称)
+    ///上传本地文件到当前目录(与 [download](YunFs::download) 对称)
     ///
     ///- `local_path` 本地文件路径
     ///- `file_name` 上传后的文件名(可含子目录,经路径解析)
@@ -350,99 +350,6 @@ impl<'a> YunFs<'a> {
     pub fn upload(&mut self, local_path: &str, file_name: &str) -> Result<(), ApiError> {
         let remote = self.resolve_path(file_name)?;
         self.api.upload(local_path, &remote, OnDup::Fail).map(|_| ())
-    }
-}
-
-use std::fs::OpenOptions;
-use std::io::Write;
-
-///下载文件到指定的位置
-///
-///其中参数url,是你获取的下载链接,access_token是用户token,dst下载下来的文件在文件系统中的位置
-///block_size用于分段下载，若值为0则不进行分段,若值不为0则以MB为单位进行分段
-///如果is_debug:设为true则会有简单的调试信息类似下面这样:
-///
-///```text
-///recieve data total 20 MB
-///recieve data total 40 MB
-///recieve data total 60 MB
-///recieve data total 80 MB
-///recieve data total 100 MB
-///recieve data total 120 MB
-///recieve data total 140 MB
-///recieve data total 160 MB
-///recieve data total 161 MB
-///finish download.
-///```
-///# 已废弃
-///
-/// 请使用 [crate::YunApi::download](crate::YunApi::download)(token 内部持有,流式落盘,零 panic)
-/// 或 [YunFs::download](YunFs::download)(YunFs 内直接按文件名下载)。
-/// 本函数保留仅为 0.3.x 兼容,存在 panic 风险与追加写入问题。
-#[deprecated(note = "请使用 YunApi::download / YunFs::download(见 docs/refactor-download.md);本函数计划 0.4 版本移除")]
-pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_debug: bool) {
-    let mut has_downloaded: i64 = 0;
-    let size: i32 = 1024 * 1024 * block_size; //每个range1MB大小,100MB
-    let config = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .build();
-    let downloader: ureq::Agent = config.into();
-    let download_url = format!("{}&access_token={}", url, access_token);
-    let mut file_to_store = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(dst)
-        .unwrap();
-    if size == 0 {
-        let mut response = downloader
-            .get(&download_url)
-            .header("User-Agent", "pan.baidu.com")
-            .call()
-            .unwrap();
-        file_to_store
-            .write_all(&response.body_mut().read_to_vec().unwrap())
-            .unwrap();
-        return;
-    }
-    let mut range_head = 0;
-    let mut range = format!("bytes={}-{}", range_head, range_head + size - 1);
-    loop {
-        let mut response = downloader
-            .get(&download_url)
-            .header("User-Agent", "pan.baidu.com")
-            .header("Range", &range)
-            .call()
-            .unwrap();
-        let len_rev = response
-            .headers()
-            .get("content-length")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .parse::<i32>()
-            .unwrap();
-        if is_debug {
-            has_downloaded += human_quota(len_rev as i64).1 as i64;
-            println!("recieve data total {} MB", has_downloaded);
-        }
-        file_to_store
-            .write_all(&response.body_mut().read_to_vec().unwrap())
-            .unwrap();
-        //println!("{}",content_range);
-        //不再需要再请求了
-        if len_rev < size {
-            if is_debug {
-                println!("finish download.");
-            }
-            break;
-        } else {
-            //需要请求下一段
-
-            range_head += size;
-            range = format!("bytes={}-{}", range_head, range_head + size - 1);
-            //println!("{} ====> {}",range,len_rev);
-            //println!("contine get next!");
-        }
     }
 }
 
