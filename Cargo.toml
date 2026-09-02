@@ -10,6 +10,13 @@ keywords = ["baiduyun", "api"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+# 低频大流量测试(369MB 真实下载,验证传输 agent 超时语义)——默认不编译,
+# 常规 --ignored 全量回归不会执行;显式开启才编译运行:
+#   cargo test --features large-tests --lib --test-threads=1 test_download_large
+large-tests = []
+
 [dependencies]
 ureq = { version = "=3.4.0", features = ["multipart"] }
 serde_json = "1.0.64"

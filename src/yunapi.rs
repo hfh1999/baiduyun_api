@@ -971,6 +971,19 @@ mod tests {
     }
 
     #[test]
+    fn test_agent_timeout_config() {
+        // 双 agent 超时语义防回归:API 30s 全局(防挂死) vs 传输无全局(大文件不被截断)
+        use std::time::Duration;
+        let api = YunApi::new("test_token");
+        let api_to = api.agent.config().timeouts();
+        assert_eq!(api_to.global, Some(Duration::from_secs(30)), "API agent 应有 30s 全局超时");
+        assert_eq!(api_to.connect, Some(Duration::from_secs(10)), "API agent 应有 10s 建连超时");
+        let tr_to = api.transfer_agent.config().timeouts();
+        assert_eq!(tr_to.global, None, "传输 agent 不应有全局超时(369MB 下载/2GB 上传会超时)");
+        assert_eq!(tr_to.connect, Some(Duration::from_secs(10)), "传输 agent 应有 10s 建连超时");
+    }
+
+    #[test]
     fn test_yunapi_send_sync() {
         // 编译期断言: YunApi 可跨线程共享(用户层文件级并发的前提,防未来改动破坏)
         fn assert_send_sync<T: Send + Sync>() {}

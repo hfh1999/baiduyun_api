@@ -719,6 +719,54 @@ fn test_download_parallel() {
     std::fs::remove_file(&local_dst).ok();
 }
 
+/// 低频大流量测试:验证 transfer agent 无全局超时(369MB 真实下载 ~90s)。
+/// 默认不编译(见 Cargo.toml `large-tests` feature)——只有显式开启才运行:
+///   cargo test --features large-tests --lib --test-threads=1 test_download_large
+#[cfg(feature = "large-tests")]
+#[test]
+fn test_download_large_exceeds_api_timeout() {
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let api = YunApi::new(&key);
+    // 动态寻找 >=300MB 的真实文件(避免硬编码用户数据)
+    let mut target: Option<(FileInfo, i64)> = None;
+    for dir in ["/", "/学习资料"] {
+        if let Ok(list) = api.get_files_list(dir, 0, 1000) {
+            for item in list {
+                if item.isdir == 0 && item.size >= 300 * 1024 * 1024 {
+                    let size = item.size;
+                    target = Some((item, size));
+                    break;
+                }
+            }
+        }
+        if target.is_some() {
+            break;
+        }
+    }
+    let Some((file, size)) = target else {
+        println!("skip: 网盘中无 >=300MB 文件,无法验证超时语义(Desktop.7z 曾符合)");
+        return;
+    };
+    println!("目标: {} ({}MB),预计下载超过 API 30s 超时", file.server_filename, size / 1024 / 1024);
+    let dlink = api.get_file_dlink(&file).expect("取链应成功");
+    let dst = std::env::temp_dir().join(format!("baiduyun_large_{}.txt", std::process::id()));
+    let started = std::time::Instant::now();
+    let bytes = api
+        .download(&dlink, dst.to_str().unwrap())
+        .expect("大文件下载不应被超时截断(transfer agent 无全局超时)");
+    let secs = started.elapsed().as_secs();
+    assert_eq!(bytes, size as u64, "大文件应完整下载");
+    assert!(
+        secs > 30,
+        "下载耗时 {secs}s 应超过 API 的 30s 全局超时——若断言失败说明传输被截断或文件偏小"
+    );
+    println!("大文件下载 ok: {bytes} bytes, 耗时 {secs}s(>30s 未被截断)");
+    std::fs::remove_file(&dst).ok();
+}
+
 #[test]
 #[ignore]
 fn test_yunfs_download_dir() {
