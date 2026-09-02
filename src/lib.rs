@@ -4,9 +4,10 @@
 //!
 //! # 特性
 //!
+//! - **纯同步 IO、零 async 运行时**:普通 `fn main` 直接跑,不引入 tokio——CLI、脚本、轻量工具开箱即用
+//! - **[YunFs](util::YunFs)(推荐)**:像操作本地文件夹一样操作网盘,支持相对路径(`pwd`/`chdir`/`ls`/`mkdir`/`rm`/`mv`/`cp`/`upload`)
 //! - **完整读写**:用户信息、空间配额、文件列表、文件信息、下载链接、关键词搜索
 //! - **写操作**:创建文件夹、删除、移动、复制、重命名、单步上传(≤2GB)
-//! - **[YunFs]**:类本地文件系统的抽象,支持相对路径(`pwd`/`chdir`/`ls`/`mkdir`/`rm`/`mv`/`cp`/`upload`)
 //! - **错误直透**:百度返回的 `errno` + `errmsg` 原样传递([ApiError])
 //! - **零 panic 设计**:网络、解析、格式异常一律返回 `Result`
 //!
@@ -23,6 +24,25 @@
 //! access_token 的获取方式见 [获取 access_token](#获取-accesstoken)。
 //!
 //! # 使用示例
+//!
+//! ## 推荐:用 YunFs 像操作本地文件系统一样
+//!
+//! 日常网盘操作推荐用 [YunFs]:它维护一个"当前目录",支持相对路径(`..`、直接文件名),
+//! 与本地文件夹的操作习惯一致,`ls` 自动翻页。
+//!
+//! ```no_run
+//! use baiduyun_api::{util, YunApi};
+//!
+//! let api = YunApi::new("你的access_token");
+//! let mut fs = util::YunFs::new(&api);
+//! fs.chdir("学习资料/").unwrap();
+//! fs.mkdir("新目录").unwrap();                    // 相对路径自动解析
+//! fs.upload("./a.txt", "a.txt").unwrap();
+//! for item in fs.ls().unwrap() {
+//!     println!("{}", item.server_filename);
+//! }
+//! fs.rm("a.txt").unwrap();
+//! ```
 //!
 //! ## 列出目录内容
 //!
@@ -57,22 +77,6 @@
 //! // 注意: 上传路径必须位于 /apps/{你的应用名}/ 下(百度限制)
 //! let result = api.upload("./photo.jpg", "/apps/myapp/photo.jpg", OnDup::Fail).unwrap();
 //! println!("上传成功: {}", result.path);
-//! ```
-//!
-//! ## 用 YunFs 像操作本地文件系统一样
-//!
-//! ```no_run
-//! use baiduyun_api::{util, YunApi};
-//!
-//! let api = YunApi::new("你的access_token");
-//! let mut fs = util::YunFs::new(&api);
-//! fs.chdir("学习资料/").unwrap();
-//! fs.mkdir("新目录").unwrap();                    // 相对路径自动解析
-//! fs.upload("./a.txt", "a.txt").unwrap();
-//! for item in fs.ls().unwrap() {
-//!     println!("{}", item.server_filename);
-//! }
-//! fs.rm("a.txt").unwrap();
 //! ```
 //!
 //! # 获取 access_token
