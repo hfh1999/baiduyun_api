@@ -1,18 +1,18 @@
 # baiduyun_api
 
-百度网盘开放平台的 Rust 封装——读写、搜索、上传一库搞定，错误信息直透百度真实原因。
+百度网盘开放平台的 Rust 封装——**纯同步**、零 async 运行时，读写、搜索、上传一库搞定，错误信息直透百度真实原因。
 
 [![github](https://img.shields.io/badge/github-hfh1999%2Fbaiduyun__api-blue)](https://github.com/hfh1999/baiduyun_api/)
-[![crates.io](https://img.shields.io/badge/crates.io-0.3.0-green)](https://crates.io/crates/baiduyun_api)
+[![crates.io](https://img.shields.io/crates/v/baiduyun_api)](https://crates.io/crates/baiduyun_api)
 [![docs.rs](https://img.shields.io/badge/docs.rs-baiduyun__api-orange)](https://docs.rs/baiduyun_api/)
 
 ## 特性
 
+- **纯同步 IO、零 async 运行时**：普通 `fn main` 直接跑，不引入 tokio——CLI、脚本、轻量工具开箱即用
+- **YunFs（推荐使用）**：像操作本地文件夹一样操作网盘——`pwd`/`chdir`/`ls`/`mkdir`/`rm`/`mv`/`cp`/`upload`，支持相对路径
 - **完整的读写能力**：用户信息、空间配额、文件列表、文件信息、下载链接、关键词搜索
 - **写操作**：创建文件夹、删除、移动、复制、重命名、单步上传（≤2GB）
-- **YunFs**：类本地文件系统的抽象——`pwd`/`chdir`/`ls`/`mkdir`/`rm`/`mv`/`cp`/`upload`，支持相对路径
 - **错误直透**：百度返回的 `errno` + `errmsg` 原样传递，不再有"谜之错误文案"
-- **零 async 运行时依赖**：纯同步（ureq）实现，不引入 tokio——CLI、脚本、轻量工具开箱即用
 - **零 panic 设计**：网络、解析、格式异常一律返回 `Result`，不崩溃
 - **开箱即用**：授权工具自动获取 token、演示 CLI 覆盖全部常用操作
 
@@ -35,6 +35,24 @@ fn main() -> Result<(), baiduyun_api::ApiError> {
 ```
 
 ## 使用示例
+
+### 推荐：YunFs —— 像操作本地文件系统一样
+
+日常网盘操作推荐用 YunFs：它维护一个"当前目录"，支持相对路径（`..`、直接文件名），和你操作本地文件夹的习惯一致。
+
+```rust
+use baiduyun_api::{util, YunApi};
+
+let api = YunApi::new("你的access_token");
+let mut fs = util::YunFs::new(&api);
+fs.chdir("学习资料/")?;              // 支持相对路径
+fs.mkdir("新目录")?;
+fs.upload("./a.txt", "a.txt")?;
+for item in fs.ls()? {               // 自动翻页,无需关心分页
+    println!("{}", item.server_filename);
+}
+fs.rm("a.txt")?;
+```
 
 ### 列出目录内容
 
@@ -65,20 +83,7 @@ let result = api.upload("./photo.jpg", "/apps/myapp/photo.jpg", OnDup::Fail)?;
 println!("上传成功: {}", result.path);
 ```
 
-### 用 YunFs 像操作本地文件系统一样
-
-```rust
-use baiduyun_api::{util, YunApi};
-
-let mut fs = util::YunFs::new(&api);
-fs.chdir("学习资料/")?;
-fs.mkdir("新目录")?;        // 相对路径自动解析
-fs.upload("./a.txt", "a.txt")?;
-for item in fs.ls()? {
-    println!("{}", item.server_filename);
-}
-fs.rm("a.txt")?;
-```
+日常操作推荐 YunFs 风格；需要精细控制时（分页、批量、原始参数），直接调用 API 方法即可。接下来看看如何获取 access_token：
 
 ## 获取 access_token
 
