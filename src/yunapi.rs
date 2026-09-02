@@ -1,7 +1,5 @@
 use super::error::ApiError;
 use super::models::*;
-use reqwest::blocking;
-use reqwest::header::USER_AGENT;
 use serde::Serialize;
 use serde_json::Value;
 use serde_urlencoded::to_string;
@@ -26,7 +24,7 @@ enum YunNode {
 ///要使用本api,必须使用YunApi结构体
 pub struct YunApi {
     access_token: String,
-    client: blocking::Client,
+    agent: ureq::Agent,
     //pwd: String, //当前路径
 }
 /// 纯函数:根据 HTTP 状态码和响应文本产出 Value 或错误,便于离线测试
@@ -97,9 +95,19 @@ impl YunApi {
     pub fn new(in_token: &str) -> YunApi {
         YunApi {
             access_token: String::from(in_token),
-            client: blocking::Client::new(),
+            agent: Self::new_agent(),
             //pwd: String::from("/"),
         }
+    }
+    /// 构建同步后端 agent(ureq)
+    ///
+    /// `http_status_as_error(false)`:非 2xx 不报错,由 `parse_response` 统一解析
+    /// status + body(与 reqwest 时代行为一致,百度错误走 errno/error_code 透传)
+    fn new_agent() -> ureq::Agent {
+        let config = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build();
+        config.into()
     }
     fn get_addr<T: Serialize>(&self, in_node: YunNode, params: &T) -> Result<String, ApiError> {
         let node_addr = get_node_addr(in_node);
@@ -148,24 +156,21 @@ impl YunApi {
             Err(ApiError::new(errno, &errmsg))
         }
     }
-    /// 解析 HTTP 响应文本为 Value(状态码检查 + JSON 解析)
-    fn parse_http_response(response: blocking::Response) -> Result<Value, ApiError> {
-        let status = response.status().as_u16(); // 先取状态码(Copy),text() 会消费 response
-        let text = response
-            .text()
-            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
-        parse_response(status, text)
-    }
     /// GET 请求,参数进 query
     fn request_get<T: Serialize>(&self, in_node: YunNode, params: &T) -> Result<Value, ApiError> {
         let addr = self.get_addr(in_node, params)?;
-        let response = self
-            .client
+        let mut response = self
+            .agent
             .get(&addr)
-            .header(USER_AGENT, "pan.baidu.com")
-            .send()
+            .header("User-Agent", "pan.baidu.com")
+            .call()
             .map_err(|e| ApiError::from(format!("send request error: {}", e).as_str()))?;
-        Self::parse_http_response(response)
+        let status = response.status().as_u16();
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
+        parse_response(status, text)
     }
     /// POST 请求,query_params 进 query、body_params 进 form body
     ///
@@ -177,14 +182,21 @@ impl YunApi {
         body_params: &B,
     ) -> Result<Value, ApiError> {
         let addr = self.get_addr(in_node, query_params)?;
-        let response = self
-            .client
+        let body = to_string(body_params)
+            .map_err(|e| ApiError::from(format!("serialize params error: {}", e).as_str()))?;
+        let mut response = self
+            .agent
             .post(&addr)
-            .header(USER_AGENT, "pan.baidu.com")
-            .form(body_params)
-            .send()
+            .header("User-Agent", "pan.baidu.com")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .send(body)
             .map_err(|e| ApiError::from(format!("send request error: {}", e).as_str()))?;
-        Self::parse_http_response(response)
+        let status = response.status().as_u16();
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
+        parse_response(status, text)
     }
     ///得到用户的基本信息
     ///
@@ -496,19 +508,24 @@ impl YunApi {
             "{}/rest/2.0/pcs/file?method=upload&access_token={}&{}",
             host, self.access_token, query
         );
-        let form = reqwest::blocking::multipart::Form::new()
+        // multipart 表单(ureq: Form::file 流式发送,2GB 内不读进内存)
+        let form = ureq::unversioned::multipart::Form::new()
             .file("file", local_path)
             .map_err(|e| {
                 ApiError::from(format!("open local file for upload error: {}", e).as_str())
             })?;
-        let response = self
-            .client
+        let mut response = self
+            .agent
             .post(&upload_addr)
-            .header(USER_AGENT, "pan.baidu.com")
-            .multipart(form)
-            .send()
+            .header("User-Agent", "pan.baidu.com")
+            .send(form)
             .map_err(|e| ApiError::from(format!("send upload request error: {}", e).as_str()))?;
-        let value = Self::parse_http_response(response)?;
+        let status = response.status().as_u16();
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
+        let value = parse_response(status, text)?;
         // 上传响应的错误字段是 error_code/error_msg(非 errno)
         let code = value["error_code"].as_i64().unwrap_or(0);
         if code != 0 {

@@ -244,11 +244,6 @@ impl<'a> YunFs<'a> {
     }
 }
 
-use reqwest::blocking::Client;
-use reqwest::header::CONTENT_LENGTH;
-use reqwest::header::RANGE;
-use reqwest::header::USER_AGENT;
-//use reqwest::header::CONTENT_RANGE;
 use std::fs::OpenOptions;
 use std::io::Write;
 
@@ -273,7 +268,10 @@ use std::io::Write;
 pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_debug: bool) {
     let mut has_downloaded: i64 = 0;
     let size: i32 = 1024 * 1024 * block_size; //每个range1MB大小,100MB
-    let downloader = Client::new();
+    let config = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build();
+    let downloader: ureq::Agent = config.into();
     let download_url = format!("{}&access_token={}", url, access_token);
     let mut file_to_store = OpenOptions::new()
         .append(true)
@@ -281,27 +279,28 @@ pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_de
         .open(dst)
         .unwrap();
     if size == 0 {
-        let response = downloader
+        let mut response = downloader
             .get(&download_url)
-            .header(USER_AGENT, "pan.baidu.com")
-            .send()
+            .header("User-Agent", "pan.baidu.com")
+            .call()
             .unwrap();
         file_to_store
-            .write_all(&(response.bytes().unwrap()))
+            .write_all(&response.body_mut().read_to_vec().unwrap())
             .unwrap();
         return;
     }
     let mut range_head = 0;
     let mut range = format!("bytes={}-{}", range_head, range_head + size - 1);
     loop {
-        let requestbuild = downloader
+        let mut response = downloader
             .get(&download_url)
-            .header(USER_AGENT, "pan.baidu.com")
-            .header(RANGE, &range);
-        let response = requestbuild.send().unwrap();
+            .header("User-Agent", "pan.baidu.com")
+            .header("Range", &range)
+            .call()
+            .unwrap();
         let len_rev = response
             .headers()
-            .get(CONTENT_LENGTH)
+            .get("content-length")
             .unwrap()
             .to_str()
             .unwrap()
@@ -312,7 +311,7 @@ pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_de
             println!("recieve data total {} MB", has_downloaded);
         }
         file_to_store
-            .write_all(&(response.bytes().unwrap()))
+            .write_all(&response.body_mut().read_to_vec().unwrap())
             .unwrap();
         //println!("{}",content_range);
         //不再需要再请求了
