@@ -537,14 +537,8 @@ impl YunApi {
             .read_to_string()
             .context("decode response text")?;
         let value = parse_response(status, text)?;
-        // 上传响应的错误字段是 error_code/error_msg(非 errno)
-        let code = value["error_code"].as_i64().unwrap_or(0);
-        if code != 0 {
-            let msg = value["error_msg"]
-                .as_str()
-                .unwrap_or("no error_msg from baidu");
-            return Err(ApiError::new(code, msg));
-        }
+        // 上传响应经 parse_response 统一处理错误(实测:失败=非 2xx+error_code 透传,
+        // 成功=200 且无 error_code 字段);此处只需解析成功结果
         serde_json::from_value(value).context("parse upload result")
     }
 
