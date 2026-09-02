@@ -25,3 +25,13 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: 离线测试与 doc 测试
         run: cargo test
+
+  # MSRV 防漂移:用声明的 rust-version 编译测试——哪天悄悄用了更新的特性,这里必红
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.71.1
+      - uses: Swatinem/rust-cache@v2
+      - name: MSRV 编译与离线测试
+        run: cargo test
