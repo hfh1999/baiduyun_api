@@ -33,8 +33,10 @@ pub struct YunApi {
 ///
 /// - 非 2xx:先尝试解析 body 的 `errno`/`errmsg` 透传百度真实错误;解析失败回退内部错误
 /// - 2xx:JSON 解析失败返回带解析详情的内部错误
-fn parse_response(status: reqwest::StatusCode, text: String) -> Result<Value, ApiError> {
-    if status.is_success() {
+///
+/// `status` 用 u16(HTTP 状态码纯数字),不依赖任何 HTTP 客户端类型——同步(ureq)与异步(reqwest)后端共用
+fn parse_response(status: u16, text: String) -> Result<Value, ApiError> {
+    if (200..300).contains(&status) {
         return serde_json::from_str(&text).map_err(|e| {
             ApiError::from(format!("parse json error: {}", e).as_str())
         });
@@ -148,7 +150,7 @@ impl YunApi {
     }
     /// 解析 HTTP 响应文本为 Value(状态码检查 + JSON 解析)
     fn parse_http_response(response: blocking::Response) -> Result<Value, ApiError> {
-        let status = response.status();
+        let status = response.status().as_u16(); // 先取状态码(Copy),text() 会消费 response
         let text = response
             .text()
             .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
@@ -669,7 +671,7 @@ mod tests {
     #[test]
     fn test_parse_response_http_error_with_error_code() {
         // pcs 系列接口(upload/locateupload)的错误字段是 error_code/error_msg(非 errno)
-        let status = reqwest::StatusCode::BAD_REQUEST;
+        let status: u16 = 400;
         let text = r#"{"error_code": 31061, "error_msg": "file already exists"}"#.to_string();
         let result = parse_response(status, text);
         let error = result.unwrap_err();
@@ -679,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_parse_response_http_error_with_errno() {
-        let status = reqwest::StatusCode::FORBIDDEN;
+        let status: u16 = 403;
         let text = r#"{"errno": 31034, "errmsg": "hit frequency control"}"#.to_string();
         let result = parse_response(status, text);
         let error = result.unwrap_err();
@@ -690,7 +692,7 @@ mod tests {
 
     #[test]
     fn test_parse_response_http_error_non_json_body() {
-        let status = reqwest::StatusCode::BAD_GATEWAY;
+        let status: u16 = 502;
         let text = "<html>502 Bad Gateway</html>".to_string();
         let result = parse_response(status, text);
         let error = result.unwrap_err();
@@ -701,7 +703,7 @@ mod tests {
 
     #[test]
     fn test_parse_response_success() {
-        let status = reqwest::StatusCode::OK;
+        let status: u16 = 200;
         let text = r#"{"errno": 0, "list": [1, 2]}"#.to_string();
         let result = parse_response(status, text);
         let value = result.unwrap();
@@ -711,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_parse_response_success_invalid_json() {
-        let status = reqwest::StatusCode::OK;
+        let status: u16 = 200;
         let text = "not json at all".to_string();
         let result = parse_response(status, text);
         let error = result.unwrap_err();
