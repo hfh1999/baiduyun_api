@@ -179,6 +179,7 @@ pub struct YunApiAsync {
 - `cargo test`:lib 65 + doc 9 全绿;**网络测试 19/19 通过**(27s 单线程,含写操作 roundtrip/上传/YunFs 相对路径/错误透传),行为与 reqwest 时代完全一致;
 - 依赖树瘦身:直接依赖仅剩 4 个(ureq =3.4.0 / serde / serde_json / serde_urlencoded),reqwest/tokio/hyper 全部移除;
 - **实施偏差**:`util::download`(分段下载工具)也使用 reqwest blocking,随迁移一并改写(文档正文未列,遗漏项);`Cargo.lock` 被 gitignore,提交不含 lock;
+- **Cargo.toml features 区未落地**:实际为纯 `ureq` 直接依赖(无 `default = ["sync"]` + optional)——async 后端尚不存在时 features 机制空转,3.1 示例画的是"完整态";待第七节 async 实施时一并引入 optional 依赖与 feature 区;
 - 需求变更记录:第八节风险 1 的版本策略最终定为**精确锁死 `ureq = "=3.4.0"`**(用户决策:极端稳妥,升级必须人工回归实测)。
 
 ## 七、异步后端图纸(本次不做,后续单独实施)
