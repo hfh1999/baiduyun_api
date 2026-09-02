@@ -1,0 +1,23 @@
+name: network-tests
+
+# 真实百度接口深度回归(24 个网络测试,~55s,单线程防频控 31034)
+# 不自动跑:需要真实 token 与百度账号——在 Actions 页面手动 "Run workflow" 触发。
+# token 存 GitHub Secrets(仓库 Settings -> Secrets):
+#   BAIDU_ACCESS_TOKEN / BAIDU_APP_NAME
+# 网络测试逻辑平台无关,ubuntu 单平台足够(Windows 网络回归在本地开发环境进行)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 网络测试(真实百度,单线程)
+        run: cargo test --lib -- --ignored --test-threads=1
+        env:
+          BAIDU_ACCESS_TOKEN: ${{ secrets.BAIDU_ACCESS_TOKEN }}
+          BAIDU_APP_NAME: ${{ secrets.BAIDU_APP_NAME }}

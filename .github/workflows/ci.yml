@@ -1,0 +1,21 @@
+name: CI
+
+# 每次 push / PR 自动跑:编译 + L0 离线单元测试(71) + doc 测试(9)
+# 网络测试(--ignored)不在此跑——需要真实 token 与百度接口,见 network.yml(手动触发)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest] # Windows 为本库实测主平台
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 离线测试与 doc 测试
+        run: cargo test
