@@ -571,6 +571,25 @@ impl YunApi {
         }
     }
 
+    /// 校验下载响应状态:2xx 通过;非 2xx 读错误体(JSON)并经 parse_response 转带 errno 的 ApiError
+    ///
+    /// 下载失败时百度返回 JSON 错误体(实测 403 -> {"error_code":31045,...}),
+    /// 错误直透承诺延续到下载链路。此辅助消除各下载路径的错误分支重复。
+    /// 注意:调用会消费 body(错误体文本被读空)。
+    fn check_download_response(status: u16, body: &mut ureq::Body) -> Result<(), ApiError> {
+        if (200..300).contains(&status) {
+            return Ok(());
+        }
+        let text = body
+            .read_to_string()
+            .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
+        // parse_response 对非 2xx 恒为 Err;Ok 分支仅作不可达防御
+        Err(match parse_response(status, text) {
+            Err(e) => e,
+            Ok(_) => ApiError::from("unexpected success in download error path"),
+        })
+    }
+
     /// 单连接下载:offset=0 全量 truncate;offset>0 Range+append(200 时回退 truncate)
     fn download_single(&self, dlink: &str, dst: &str, offset: u64) -> Result<u64, ApiError> {
         let url = Self::with_access_token(dlink, &self.access_token);
@@ -582,14 +601,7 @@ impl YunApi {
             ApiError::from(format!("send download request error: {}", e).as_str())
         })?;
         let status = response.status().as_u16();
-        if !(200..300).contains(&status) {
-            // 非 2xx:body 是 JSON 错误体(实测 403 -> {"error_code":31045,...})
-            let text = response
-                .body_mut()
-                .read_to_string()
-                .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
-            return parse_response(status, text).map(|_| 0);
-        }
+        Self::check_download_response(status, response.body_mut())?;
         // 断点双态:206 + offset>0 -> append 续写;200(服务器忽略 Range)或从头 -> truncate
         let resume = status == 206 && offset > 0;
         let mut options = std::fs::OpenOptions::new();
@@ -624,13 +636,7 @@ impl YunApi {
             .call()
             .map_err(|e| ApiError::from(format!("send download request error: {}", e).as_str()))?;
         let status = probe.status().as_u16();
-        if !(200..300).contains(&status) {
-            let text = probe
-                .body_mut()
-                .read_to_string()
-                .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
-            return parse_response(status, text).map(|_| 0);
-        }
+        Self::check_download_response(status, probe.body_mut())?;
         if status != 206 {
             // 服务器不支持 Range:回退单连接(读完探测 body 以释放连接)
             let _ = probe.body_mut().read_to_vec().map_err(|e| {
@@ -703,12 +709,13 @@ impl YunApi {
             .call()
             .map_err(|e| ApiError::from(format!("send download request error: {}", e).as_str()))?;
         let status = response.status().as_u16();
+        Self::check_download_response(status, response.body_mut())?;
         if status != 206 {
-            let text = response
-                .body_mut()
-                .read_to_string()
-                .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
-            return parse_response(status, text).map(|_| 0);
+            // 2xx 但非 206:服务器忽略 Range,分块语义被破坏(不应发生,探测已确认支持)
+            return Err(ApiError::from(format!(
+                "download block: expected 206 partial content, got {status}"
+            )
+            .as_str()));
         }
         // 定位写入(不 truncate:文件已在并行入口 set_len 预置)
         let mut options = std::fs::OpenOptions::new();
