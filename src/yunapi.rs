@@ -43,7 +43,11 @@ impl YunNode {
 ///要使用本api,必须使用YunApi结构体
 pub struct YunApi {
     access_token: String,
+    /// API 请求 agent:小 JSON body,带全局超时防无限挂起
     agent: ureq::Agent,
+    /// 文件传输 agent:大 body 流式(下载 dlink/multipart 上传),
+    /// 不设全局超时(大文件传输可远超 API 超时),仅建连超时
+    transfer_agent: ureq::Agent,
     //pwd: String, //当前路径
 }
 /// 纯函数:根据 HTTP 状态码和响应文本产出 Value 或错误,便于离线测试
@@ -112,17 +116,33 @@ impl YunApi {
     pub fn new(in_token: &str) -> YunApi {
         YunApi {
             access_token: String::from(in_token),
-            agent: Self::new_agent(),
+            agent: Self::new_api_agent(),
+            transfer_agent: Self::new_transfer_agent(),
             //pwd: String::from("/"),
         }
     }
-    /// 构建同步后端 agent(ureq)
+    /// 构建 API 请求 agent(ureq)
     ///
-    /// `http_status_as_error(false)`:非 2xx 不报错,由 `parse_response` 统一解析
-    /// status + body(与 reqwest 时代行为一致,百度错误走 errno/error_code 透传)
-    fn new_agent() -> ureq::Agent {
+    /// - `http_status_as_error(false)`:非 2xx 不报错,由 `parse_response` 统一解析
+    ///   status + body(与 reqwest 时代行为一致,百度错误走 errno/error_code 透传)
+    /// - `timeout_global(30s)`:API body 均为小 JSON,30s 总预算防无限挂起
+    /// - `timeout_connect(10s)`:连不上/TLS 握手卡死快速失败
+    fn new_api_agent() -> ureq::Agent {
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
+            .timeout_global(Some(std::time::Duration::from_secs(30)))
+            .timeout_connect(Some(std::time::Duration::from_secs(10)))
+            .build();
+        config.into()
+    }
+    /// 构建文件传输 agent(下载 dlink / multipart 上传)
+    ///
+    /// 大 body 流式可能远超 API 超时(369MB@4MB/s≈92s、2GB 上传≈512s),
+    /// 故**不设全局超时**(会截断大文件传输);仅 `timeout_connect(10s)` 防连不上挂死
+    fn new_transfer_agent() -> ureq::Agent {
+        let config = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(std::time::Duration::from_secs(10)))
             .build();
         config.into()
     }
@@ -483,13 +503,14 @@ impl YunApi {
             upload_version: "2.0".to_string(),
         };
         let value = self.request_get(YunNode::LocateUpload, &params)?;
-        // 成功时 error_code=0,失败时带 error_msg
-        let code = value["error_code"].as_i64().unwrap_or(0);
-        if code != 0 {
-            let msg = value["error_msg"]
-                .as_str()
-                .unwrap_or("no error_msg from baidu");
-            return Err(ApiError::new(code, msg));
+        // 成功时 error_code=0(字段存在);失败时带 error_msg——显式检查,字段缺失视为成功
+        if let Some(code) = value["error_code"].as_i64() {
+            if code != 0 {
+                let msg = value["error_msg"]
+                    .as_str()
+                    .unwrap_or("no error_msg from baidu");
+                return Err(ApiError::new(code, msg));
+            }
         }
         value["servers"][0]["server"]
             .as_str()
@@ -526,7 +547,7 @@ impl YunApi {
             .file("file", local_path)
             .context("open local file for upload")?;
         let mut response = self
-            .agent
+            .transfer_agent
             .post(&upload_addr)
             .header("User-Agent", "pan.baidu.com")
             .send(form)
@@ -596,7 +617,7 @@ impl YunApi {
     /// 单连接下载:offset=0 全量 truncate;offset>0 Range+append(200 时回退 truncate)
     fn download_single(&self, dlink: &str, dst: &str, offset: u64) -> Result<u64, ApiError> {
         let url = Self::with_access_token(dlink, &self.access_token);
-        let mut request = self.agent.get(&url).header("User-Agent", "pan.baidu.com");
+        let mut request = self.transfer_agent.get(&url).header("User-Agent", "pan.baidu.com");
         if offset > 0 {
             request = request.header("Range", &format!("bytes={offset}-"));
         }
@@ -630,7 +651,7 @@ impl YunApi {
 
         // 1. 探测总大小(Range: bytes=0-0,206 时 content-range 携带 total)
         let mut probe = self
-            .agent
+            .transfer_agent
             .get(&url)
             .header("User-Agent", "pan.baidu.com")
             .header("Range", "bytes=0-0")
@@ -650,7 +671,7 @@ impl YunApi {
             .and_then(|s| s.rsplit('/').next())
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| ApiError::from("download probe: no content-range total"))?;
-        // 读完 1 字节探测 body,释放连接回池
+        // 读完 1 字节探测 body,释放连接回池;读取失败视为完成(该连接本就作废,无需报错)
         let mut buf = [0u8; 64];
         while probe.body_mut().as_reader().read(&mut buf).unwrap_or(0) > 0 {}
         if offset >= total {
@@ -676,7 +697,7 @@ impl YunApi {
         std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(ranges.len());
             for (start, blk_len) in ranges {
-                let agent = &self.agent;
+                let agent = &self.transfer_agent;
                 let url = &url;
                 let dst = dst;
                 handles.push(s.spawn(move || {

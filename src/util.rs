@@ -160,17 +160,13 @@ impl<'a> YunFs<'a> {
     ///- "/dir1/dir2/dir3[/]"
     ///- "dir1/dir2/dir3[/]"
     pub fn chdir(&mut self, dir_str: &str) -> Result<(), ApiError> {
-        //每一次目录变动都需要进行一次在线检查,检查失败则操作失败
-        let resolved_result = self.resolve_path(dir_str);
-        let dir_resolved = resolved_result?;
-        //debug;;; println!("resolved:path {}",dir_resolved);
-        if self.api.get_files_list(&dir_resolved, 0, 0).is_ok() {
-            //将本地表示也改变为目录切换后的版本
-            self.current_path = dir_resolved;
-            Ok(())
-        } else {
-            Err(ApiError::from("Error:chdir():the directory may not exist."))
-        }
+        //在线确认目标目录存在:失败即透传真实原因(频控 31034/网络错误/-9 目录不存在),
+        //不伪造"目录可能不存在"文案
+        let dir_resolved = self.resolve_path(dir_str)?;
+        self.api.get_files_list(&dir_resolved, 0, 0)?;
+        //将本地表示也改变为目录切换后的版本
+        self.current_path = dir_resolved;
+        Ok(())
     }
 
     ///列出当前目录的所有文件
