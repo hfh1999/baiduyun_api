@@ -2,7 +2,7 @@
 
 > 分支: `feat/split-upload`
 > 日期: 2026-09-02
-> 状态: **部分实施**——v1(`YunApi::download`)已完成,阶段 2(`YunFs::download`)待实施(见第七节)
+> 状态: **部分实施**——引擎层 v1(`YunApi::download`)已完成;其余 v1(YunFs)待实施、v2 未排期(见第七节)
 > 版本背景: 0.3.1 已发布。0.3.0 起承诺 API 稳定(只增不改):本方案新增 API,旧 `util::download` 保留仅废弃
 
 ## 一、背景与动机
@@ -21,10 +21,12 @@
 
 ### 1.2 目标
 
-1. 新增 `YunApi::download`:单文件流式下载引擎(零 panic、覆盖语义、token 内部持有)。
-2. 新增 `YunFs::download`:文件系统语义的下载入口(定位→取链→下载预制)。
-3. 网络闭环测试补盲区;`YunApi` 保证 `Send + Sync`(用户层并发前提)。
-4. 下载扩展能力(v2)与多线程边界以"设计决策记录"(第三节)定稿。
+| 版本 | 范围 | 一句话 |
+|---|---|---|
+| v1 | `YunApi::download` + `YunFs::download` | 单文件流式下载,零 panic、覆盖语义、token 内部持有 |
+| v2 | `download_with(opts)` + `YunFs::download_dir` | 断点续传/分块并发(引擎)、目录递归(YunFs) |
+
+两个版本的接口裁决与分层原则见第三节;逐版本完整设计见第四、五节。
 
 ## 二、实测结论(2026-09-02,真实百度,369MB 文件 Desktop.7z)
 
@@ -32,37 +34,27 @@
 |---|---|---|---|
 | 1 | 不带 token GET dlink | **403** `error_code:31045 user not exists` | **下载必须带 access_token** → 下载器必须在持有 token 的 `YunApi` 内 |
 | 2 | 带 token GET dlink | 200, octet-stream, content-length 369265004 | 正常下载 |
-| 3 | `Range: bytes=0-15` | **206**, `content-range: bytes 0-15/369265004`, 16/16 字节 | **dlink 支持 Range 分段**(v2 前提) |
+| 3 | `Range: bytes=0-15` | **206**, `content-range: bytes 0-15/369265004`, 16/16 字节 | **dlink 支持 Range 分段**(v2 断点/分块前提) |
 
 ## 三、设计决策记录(讨论定稿)
 
-### 3.1 分层原则:什么进库、什么留给用户
+### 3.1 分层全景(什么进库、什么留给用户)
 
 判定标准:**固定且高频的组合 → 预制进库;自由编排 → 用户层;传输调优参数 → 只进引擎层**。
 
-| 层 | 能力 | 归属 | 状态 |
-|---|---|---|---|
-| 传输引擎 | `YunApi::download`(单文件流式) | 库(协议/IO 细节) | ✅ v1 已完成 |
-| 传输引擎增强 | `YunApi::download_with(opts)`(resume/分块) | 库 | v2(前提实验见 8.1) |
-| 预制便利 | `YunFs::download`(定位→取链→下载三步) | 库(固定组合) | 阶段 2 |
-| 预制便利 | `YunFs::download_dir`(目录递归) | 库(固定组合) | v2 评估(8.2) |
-| 文件级自由并发 | 用户用 `std::thread` 组合 | **用户层**,库只保证 `Send + Sync` | 编译期断言(阶段 2) |
+| 层 | 能力 | 归属 | 版本 | 详情 |
+|---|---|---|---|---|
+| 传输引擎 | `YunApi::download`(单文件流式) | 库(协议/IO 细节) | v1 ✅ | 4.1 |
+| 传输引擎增强 | `YunApi::download_with(opts)`(断点/分块) | 库 | v2 | 4.2 |
+| 预制便利 | `YunFs::download`(定位→取链→下载三步) | 库(固定组合) | v1 | 5.1 |
+| 预制便利 | `YunFs::download_dir`(目录递归 `cp -r`) | 库(固定组合) | v2 | 5.2 |
+| 文件级自由并发 | 用户 `std::thread` 组合 | **用户层** | 库只保证 `Send+Sync` | 3.3 |
 
-**裁决规则**:YunFs 只预制"文件系统语义"(下哪个/存到哪/是否递归),**永不透传传输调优参数**——`cp` 没有"用几个线程"参数,断点/分块参数只属于引擎层 `download_with`。
+**裁决规则**:YunFs 只预制"文件系统语义"(下哪个/存到哪/是否递归),**永不透传传输调优参数**——`cp` 没有"用几个线程"参数,断点/分块参数只属于引擎层。
 
-### 3.2 接口面裁决:一个引擎 + 选项(否决"三个平级接口")
+### 3.2 接口面裁决(否决"三个平级接口")
 
-resume 与分块并发是**同一分段调度器的两种参数**,不是三个独立能力:
-
-```rust
-// 便捷入口(v1,已实施)= offset 0 + threads 1
-pub fn download(&self, dlink: &str, dst: &str) -> Result<u64, ApiError>
-// 增强入口(v2)
-pub fn download_with(&self, dlink: &str, dst: &str, opts: DownloadOpts) -> Result<u64, ApiError>
-pub struct DownloadOpts { offset: u64, threads: usize }  // 未来可加:进度回调/限速
-```
-
-否决三平级接口(download / download_resume / download_parallel)的理由:实现重复(Range 逻辑各写一遍)、组合爆炸(想"并发+续传"要第 4 个方法)、未来加选项(限速/进度)需 ×N。
+resume 与分块并发是**同一分段调度器的两种参数**(offset/threads),不是三个独立能力。三平级接口(download / download_resume / download_parallel)的问题:实现重复、组合爆炸(想"并发+续传"要第 4 个方法)、未来加选项(限速/进度)需 ×N。故定:**一个引擎 + 选项**,下载接口形态见 4.1/4.2。
 
 ### 3.3 多线程的三个维度(谁负责什么)
 
@@ -70,7 +62,7 @@ pub struct DownloadOpts { offset: u64, threads: usize }  // 未来可加:进度�
 |---|---|---|
 | 义务层:库可被多线程共享 | 库 | `YunApi` 天然 `Send + Sync`(ureq::Agent 内部 Arc),加编译期断言防回归 |
 | 文件级并发(多文件同时下) | **用户层** | 不内置;Send+Sync 保证 + 示例演示 |
-| 分块级并发(单文件多段) | 库引擎层(v2) | `download_with(threads>1)`;前提实验见 8.1 |
+| 分块级并发(单文件多段) | 引擎层 v2 | `download_with(threads>1)`;前提实验见 4.2 |
 
 ### 3.4 异步下载图纸(异步 feature 落地时实施,接口镜像同步)
 
@@ -79,9 +71,9 @@ pub struct DownloadOpts { offset: u64, threads: usize }  // 未来可加:进度�
 - 同步做不出的形态:**Stream 化下载**(逐块 yield → 进度/限速/取消)列为可选项;
 - 文件写入选 tokio::fs 真异步还是 spawn_blocking 包 std::fs——实施时定。
 
-## 四、v1 设计(已实施:`YunApi::download`)
+## 四、引擎层设计(API 层下载)
 
-### 4.1 签名与语义
+### 4.1 v1 `YunApi::download` — 单文件流式引擎(✅ 已实施)
 
 ```rust
 /// 下载文件到本地(自动拼接 access_token,流式落盘,覆盖已存在)
@@ -92,18 +84,18 @@ pub struct DownloadOpts { offset: u64, threads: usize }  // 未来可加:进度�
 pub fn download(&self, dlink: &str, dst: &str) -> Result<u64, ApiError>
 ```
 
-- URL 拼接纯函数 `with_access_token`:dlink 不含 `access_token=` 则追加(实测必需);已带不重复。
-- 全链路错误映射 `ApiError`,零 panic;非 2xx 走 `parse_response` 纯函数 → 带 errno 的 ApiError(错误直透延续到下载)。
+**语义与实现要点**:
+- URL 拼接纯函数 `with_access_token`:dlink 不含 `access_token=` 则追加(实测必需);已带不重复;
+- 全链路错误映射 `ApiError`,零 panic;非 2xx 走 `parse_response` 纯函数 → 带 errno 的 ApiError(错误直透延续到下载);
+- 覆盖语义 `File::create`(truncate),修复旧实现 append 续写 bug。
 
-### 4.2 流式落盘实现细节(技术沉淀)
-
-ureq 3.4 的 `body_mut().read_to_vec()/read_to_string()` 会把整段响应读进内存(369MB 不可行);`body_mut().as_reader()` 返回实现 `std::io::Read` 的 `BodyReader`——流式源头:
+**流式落盘细节(技术沉淀)**:ureq 3.4 的 `read_to_vec()/read_to_string()` 会整段进内存(369MB 不可行);`body_mut().as_reader()` 返回实现 `std::io::Read` 的 `BodyReader`——流式源头:
 
 ```rust
-let mut file = std::fs::File::create(dst)  // create = 覆盖(truncate)
+let mut file = std::fs::File::create(dst)
     .map_err(|e| ApiError::from(format!("open local file error: {}", e).as_str()))?;
 let mut reader = response.body_mut().as_reader();
-let mut buf = [0u8; 64 * 1024];            // 固定 64KB 缓冲,内存恒定与文件大小无关
+let mut buf = [0u8; 64 * 1024];   // 固定 64KB 缓冲,内存恒定与文件大小无关
 let mut total: u64 = 0;
 loop {
     let n = match reader.read(&mut buf) {
@@ -111,23 +103,58 @@ loop {
         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
         Err(e) => return Err(ApiError::from(format!("read download body error: {}", e).as_str())),
     };
-    if n == 0 { break; }                   // EOF = 完成
+    if n == 0 { break; }          // EOF = 完成
     file.write_all(&buf[..n])
         .map_err(|e| ApiError::from(format!("write local file error: {}", e).as_str()))?;
     total += n as u64;
 }
 ```
 
-关键点:
-- **必须完整读到 EOF**:ureq Agent 连接池要求 body 读净才能复用连接;中途 drop 连接作废(断点续传动机);
+- **必须完整读到 EOF**:ureq Agent 连接池要求 body 读净才能复用连接;中途 drop 连接作废(断点续传的动机);
 - **非 2xx**:错误体是 JSON(实测 403 → 31045),先 read_to_string(错误体很小)再走 `parse_response`;
 - **返回 total**:调用方与远端 size 对比校验(v1 不内置校验)。
 
-### 4.3 旧 `util::download` 处理
+### 4.2 v2 `YunApi::download_with` — 断点续传 + 分块并发(未排期,前提实验先行)
 
-保留不动(0.3.0 稳定承诺),加 `#[deprecated(note = "请使用 YunApi::download / YunFs::download")]`——不破坏编译(仅警告)。
+```rust
+/// 下载文件,支持断点续传与分块并发(引擎增强入口)
+///
+/// - `dlink`/`dst` 语义同 [Self::download]
+/// - `opts.offset` > 0:断点续传——从该字节偏移继续,追加写入 `dst`;
+///   服务器忽略 Range 返回 200 全量时,自动回退从头下载(truncate)
+/// - `opts.threads` > 1:分块并发——把 `[offset, 文件尾)` 切成 threads 块并行拉取
+/// - 返回实际(本次)下载字节数
+pub fn download_with(&self, dlink: &str, dst: &str, opts: DownloadOpts) -> Result<u64, ApiError>
 
-## 五、阶段 2 设计(待实施:`YunFs::download`)
+pub struct DownloadOpts {
+    pub offset: u64,    // 0 = 从头;>0 = 断点续传
+    pub threads: usize, // 1 = 单线程(与 download 等价);>1 = 分块并发
+}
+impl Default for DownloadOpts { /* offset: 0, threads: 1 */ }
+```
+
+**行为矩阵**(组合天然成立,无需第 4 个接口):
+
+| offset | threads | 行为 |
+|---|---|---|
+| 0 | 1 | 全量单线程(= v1 `download`,便捷入口是其特例) |
+| >0 | 1 | 断点续传:Range 请求 + append;200(忽略 Range)时回退从头 |
+| 0 | >1 | 分块并发:切块并行拉取,块失败独立重试 |
+| >0 | >1 | 并发续传:从 offset 切块 |
+
+**关键语义**:
+- 断点双态:请求 `Range: bytes={offset}-`;响应 **206 → append 写入**;响应 **200 → 从头 truncate 重下**(不能 append 错位);
+- 分块并发 = 同一调度器的参数组合,每块独立可重试 → **分块天然含断点语义**;
+- 进度回调/限速字段未来在此结构上扩展(不加新接口)。
+
+**前提实验(实施前必须做)**:
+1. 百度单连接是否限速——**不限速则分块并发纯添乱**,只实现 offset(断点)即可;
+2. dlink 并发 Range 容忍度(多连接是否被 CDN 限/封);
+3. 续传后文件完整性校验方案(offset 校验/大小对比,避免错位续传污染文件)。
+
+## 五、YunFs 层设计(文件系统语义入口)
+
+### 5.1 v1 `YunFs::download` — 单文件下载(待实施)
 
 ```rust
 /// 下载当前目录下的文件到本地(自动定位 + 取链 + 下载)
@@ -138,10 +165,16 @@ loop {
 pub fn download(&mut self, file_name: &str, local: &str) -> Result<u64, ApiError>
 ```
 
-- 实现 = 三步编排:当前目录 `ls` + find 定位 → `get_file_dlink` → `YunApi::download`;传输引擎不重复(5 行内);
-- 定位开销:一次 ls(≤1000 条)+ find,接受;
-- `local` 为完整本地文件路径;本地目标是目录时自动拼远端文件名 → v2(`cp` 行为);
+- 实现 = 三步编排:当前目录 `ls` + find 定位 → `get_file_dlink` → 调 [YunApi::download](crate::YunApi::download)(传输引擎不重复,几行组合);
+- 定位开销:一次 ls(≤1000 条)+ find,接受;与 chdir 在线验证语义一致;
 - 需要断点/并发等传输调优时,文档指引用户直接用 API 层组合(YunFs 不透传)。
+
+### 5.2 v2 `YunFs::download_dir` — 目录递归下载(未排期,评估项)
+
+- **若做,串行先行**:树遍历 + **批量取链**(`get_files_dlink_vec` 攒批,避免逐文件 filemetas 触发 API 频控 31034);
+- 本地目标为目录时自动拼远端文件名(`cp` 行为)一并实现;
+- **并发的坑(记录,防踩)**:错误语义(串行"遇错即停报告位置"干净;并发部分成功 → 返回类型变化——若做,用"遇错即停调度"保串行语义,不加部分成功报告类型)、线程数必须封顶(大目录爆连接池/句柄)、失败重试与错误聚合纠缠、并发需先全量遍历收集任务(多一轮网络);
+- 并发前提实验同 4.2;倾向:**串行可能即终态**——不限速则并发只是把总带宽切碎。
 
 ## 六、测试计划
 
@@ -156,13 +189,13 @@ pub fn download(&mut self, file_name: &str, local: &str) -> Result<u64, ApiError
 
 | 测试 | 流程 | 状态 |
 |---|---|---|
-| `download_roundtrip` | 上传 16KB 全字节值内容 → 取链 → `YunApi::download` 落盘 → **逐字节一致** + 字节数 == 内容长度 → 清理 | ✅ 已通过 |
+| `download_roundtrip` | 上传 16KB 全字节值内容 → 取链 → `download` 落盘 → **逐字节一致** + 字节数 == 内容长度 → 清理 | ✅ 已通过 |
 | `yunfs_download` | 上传临时文件 → chdir → `fs.download("文件名", 本地)` → 字节一致 → 清理 | 阶段 2(2.2) |
 | 大文件手动验证 | Desktop.7z(369MB)整文件下载 → 大小 == 369265004 | 手动 |
 
 ## 七、开发步骤与实际结果
 
-### 阶段 1:核心下载器(✅ 已完成)
+### 阶段 1:引擎 v1(✅ 已完成)
 
 | 步骤 | 内容 | 结果 |
 |---|---|---|
@@ -172,12 +205,12 @@ pub fn download(&mut self, file_name: &str, local: &str) -> Result<u64, ApiError
 | 1.4 | 网络测试 `download_roundtrip` | ✅ 通过(16KB 全字节值逐字节一致) |
 | 1.5 | 提交 `72df67f` | ✅ |
 
-### 阶段 2:YunFs 映射(待实施)
+### 阶段 2:YunFs v1(待实施)
 
 | 步骤 | 内容 | 验证 |
 |---|---|---|
 | 2.0 | 编译期断言 `YunApi: Send + Sync` | 编译 |
-| 2.1 | `YunFs::download`(定位 + 取链 + 下载) | lib 测试全绿 |
+| 2.1 | `YunFs::download`(5.1:定位 + 取链 + 下载) | lib 测试全绿 |
 | 2.2 | 网络测试 `yunfs_download` 闭环 | 网络测试通过 |
 | 2.3 | README/lib.rs 示例补充下载用法 | doc 测试全绿 |
 | 2.4 | **提交**:`内部修改: YunFs新增download映射,个人下载闭环完成` | — |
@@ -189,22 +222,8 @@ pub fn download(&mut self, file_name: &str, local: &str) -> Result<u64, ApiError
 | 3.1 | 本文档状态更新为"已实施",记录实际结果 |
 | 3.2 | 提交文档 |
 
-## 八、v2 图纸(未排期,前提实验先行)
-
-### 8.1 `download_with(opts)` — 引擎增强
-
-- **前提实验(实施前必须做)**:① 百度单连接是否限速(不限速则分块并发纯添乱) ② dlink 并发 Range 容忍度——只做 resume 的门槛低,分块并发的门槛高;
-- 语义:offset > 0 断点续传——请求 `Range: bytes={offset}-`,响应 **206 → append 写入**;响应 **200(服务器忽略 Range)→ 必须从头 truncate**(双态处理);
-- threads > 1:每块独立可重试 = 分块天然含断点语义,无需独立 resume 接口。
-
-### 8.2 `download_dir` — 目录递归(v2 评估)
-
-- 若做,串行先行:树遍历 + **批量取链**(`get_files_dlink_vec` 攒批,避免逐文件 filemetas 触发频控 31034);
-- 并发的坑(记录,防踩):错误语义(串行"遇错即停报告位置"干净;并发部分成功 → 返回类型变化,若做用"遇错即停调度"保串行语义)、线程数必须封顶(大目录爆连接池/句柄)、重试与错误聚合纠缠、并发需先全量遍历收集任务(多一轮网络);
-- 倾向:**串行可能即终态**——不限速则并发只是把总带宽切碎。
-
-## 九、已确认小决策
+## 八、已确认小决策
 
 1. 进度回调 v1 不做:返回字节数自行展示;回调形态(闭包/句柄/stream)异步图纸再议。
-2. `fs.download` 的 `local` 语义:v1 为完整本地路径;目录目标自动拼名 v2。
+2. `fs.download` 的 `local` 语义:v1 为完整本地路径;目录目标自动拼名并入 v2 download_dir。
 3. 错误文案统一 `ApiError`,错误直透(errno)承诺覆盖下载链路。
