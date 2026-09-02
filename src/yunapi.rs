@@ -148,8 +148,7 @@ impl YunApi {
     }
     fn get_addr<T: Serialize>(&self, in_node: YunNode, params: &T) -> Result<String, ApiError> {
         let node_addr = get_node_addr(in_node);
-        let query_string = to_string(params)
-            .context("serialize params")?;
+        let query_string = to_string(params).context("serialize params")?;
 
         if node_addr.contains('?') {
             let mut addr = format!("{}&access_token={}", node_addr, self.access_token);
@@ -167,18 +166,18 @@ impl YunApi {
     }
     /// 把响应 "list" 字段解析为 Vec<T>,统一错误处理;空列表是合法响应
     fn parse_list<T: serde::de::DeserializeOwned>(value: &Value) -> Result<Vec<T>, ApiError> {
-        let list = value["list"].as_array().ok_or_else(|| {
-            ApiError::from("response has no list field or it is not an array")
-        })?;
+        let list = value["list"]
+            .as_array()
+            .ok_or_else(|| ApiError::from("response has no list field or it is not an array"))?;
         list.iter()
             .map(|item| serde_json::from_value(item.clone()).context("malformed list item"))
             .collect()
     }
     /// 检查响应 errno 是否为 0;不为 0 则返回透传百度 errmsg 的错误
     fn check_errno(value: &Value) -> Result<(), ApiError> {
-        let errno = value["errno"].as_i64().ok_or_else(|| {
-            ApiError::from("response has no errno field")
-        })?;
+        let errno = value["errno"]
+            .as_i64()
+            .ok_or_else(|| ApiError::from("response has no errno field"))?;
         if errno == 0 {
             Ok(())
         } else {
@@ -217,8 +216,7 @@ impl YunApi {
     ) -> Result<Value, ApiError> {
         let node_name = in_node.method_name();
         let addr = self.get_addr(in_node, query_params)?;
-        let body = to_string(body_params)
-            .context("serialize params")?;
+        let body = to_string(body_params).context("serialize params")?;
         let mut response = self
             .agent
             .post(&addr)
@@ -367,7 +365,9 @@ impl YunApi {
         let file_vec = vec![file];
         let mut link_vec = self.get_files_dlink_vec(&file_vec)?;
         //单文件请求最多返回一个链接,直接取出,无需复制
-        link_vec.pop().ok_or_else(|| ApiError::from("empty dlink list"))
+        link_vec
+            .pop()
+            .ok_or_else(|| ApiError::from("empty dlink list"))
     }
 
     /// 根据关键字进行搜索
@@ -399,7 +399,10 @@ impl YunApi {
             return Err(ApiError::new(ApiError::E_INTERNAL, "Page is less than 1."));
         }
         if in_num > 1000 {
-            return Err(ApiError::new(ApiError::E_INTERNAL, "Num is more than 1000."));
+            return Err(ApiError::new(
+                ApiError::E_INTERNAL,
+                "Num is more than 1000.",
+            ));
         }
         let value = self.request_get(YunNode::Search, &params)?;
         Self::check_errno(&value)?;
@@ -436,9 +439,7 @@ impl YunApi {
             for item in info {
                 let errno = item["errno"].as_i64().unwrap_or(0);
                 if errno != 0 {
-                    let errmsg = item["errmsg"]
-                        .as_str()
-                        .unwrap_or("no errmsg from baidu");
+                    let errmsg = item["errmsg"].as_str().unwrap_or("no errmsg from baidu");
                     return Err(ApiError::new(errno, errmsg));
                 }
             }
@@ -604,9 +605,7 @@ impl YunApi {
         if (200..300).contains(&status) {
             return Ok(());
         }
-        let text = body
-            .read_to_string()
-            .context("decode download body")?;
+        let text = body.read_to_string().context("decode download body")?;
         // parse_response 对非 2xx 恒为 Err;Ok 分支仅作不可达防御
         Err(match parse_response(status, text) {
             Err(e) => e,
@@ -617,7 +616,10 @@ impl YunApi {
     /// 单连接下载:offset=0 全量 truncate;offset>0 Range+append(200 时回退 truncate)
     fn download_single(&self, dlink: &str, dst: &str, offset: u64) -> Result<u64, ApiError> {
         let url = Self::with_access_token(dlink, &self.access_token);
-        let mut request = self.transfer_agent.get(&url).header("User-Agent", "pan.baidu.com");
+        let mut request = self
+            .transfer_agent
+            .get(&url)
+            .header("User-Agent", "pan.baidu.com");
         if offset > 0 {
             request = request.header("Range", &format!("bytes={offset}-"));
         }
@@ -633,9 +635,7 @@ impl YunApi {
         } else {
             options.truncate(true);
         }
-        let mut file = options
-            .open(dst)
-            .context("open local file")?;
+        let mut file = options.open(dst).context("open local file")?;
         Self::stream_to_file(response.body_mut().as_reader(), &mut file)
     }
 
@@ -661,7 +661,10 @@ impl YunApi {
         Self::check_download_response(status, probe.body_mut())?;
         if status != 206 {
             // 服务器不支持 Range:回退单连接(读完探测 body 以释放连接)
-            let _ = probe.body_mut().read_to_vec().context("decode download body")?;
+            let _ = probe
+                .body_mut()
+                .read_to_vec()
+                .context("decode download body")?;
             return self.download_single(dlink, dst, offset);
         }
         let total: u64 = probe
@@ -690,24 +693,27 @@ impl YunApi {
         let mut ranges = Vec::with_capacity(block_count);
         for i in 0..block_count as u64 {
             let start = offset + i * base;
-            let end = if i + 1 == block_count as u64 { total } else { start + base };
+            let end = if i + 1 == block_count as u64 {
+                total
+            } else {
+                start + base
+            };
             ranges.push((start, end - start));
         }
         let mut downloaded: u64 = 0;
         std::thread::scope(|s| {
             let mut handles = Vec::with_capacity(ranges.len());
+            // move 闭包:start/blk_len/dst 为 Copy 值直接捕获;url 借引用绑定,避免 move 本体
+            let url_ref = &url;
             for (start, blk_len) in ranges {
-                let agent = &self.transfer_agent;
-                let url = &url;
-                let dst = dst;
                 handles.push(s.spawn(move || {
-                    Self::download_block(agent, url, dst, start, blk_len)
+                    Self::download_block(&self.transfer_agent, url_ref, dst, start, blk_len)
                 }));
             }
             for h in handles {
-                downloaded += h.join().unwrap_or_else(|_| {
-                    Err(ApiError::from("download block thread panicked"))
-                })?;
+                downloaded += h
+                    .join()
+                    .unwrap_or_else(|_| Err(ApiError::from("download block thread panicked")))?;
             }
             Ok::<_, ApiError>(())
         })?;
@@ -732,17 +738,14 @@ impl YunApi {
         Self::check_download_response(status, response.body_mut())?;
         if status != 206 {
             // 2xx 但非 206:服务器忽略 Range,分块语义被破坏(不应发生,探测已确认支持)
-            return Err(ApiError::from(format!(
-                "download block: expected 206 partial content, got {status}"
-            )
-            .as_str()));
+            return Err(ApiError::from(
+                format!("download block: expected 206 partial content, got {status}").as_str(),
+            ));
         }
         // 定位写入(不 truncate:文件已在并行入口 set_len 预置)
         let mut options = std::fs::OpenOptions::new();
         options.write(true);
-        let mut file = options
-            .open(dst)
-            .context("open local file")?;
+        let mut file = options.open(dst).context("open local file")?;
         use std::io::Seek;
         file.seek(std::io::SeekFrom::Start(start))
             .context("seek local file")?;
@@ -763,11 +766,9 @@ impl YunApi {
                 Ok(n) => n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => {
-                    return Err(ApiError::from(format!(
-                        "read download body error: {}",
-                        e
-                    )
-                    .as_str()))
+                    return Err(ApiError::from(
+                        format!("read download body error: {}", e).as_str(),
+                    ))
                 }
             };
             if n == 0 {
@@ -976,11 +977,26 @@ mod tests {
         use std::time::Duration;
         let api = YunApi::new("test_token");
         let api_to = api.agent.config().timeouts();
-        assert_eq!(api_to.global, Some(Duration::from_secs(30)), "API agent 应有 30s 全局超时");
-        assert_eq!(api_to.connect, Some(Duration::from_secs(10)), "API agent 应有 10s 建连超时");
+        assert_eq!(
+            api_to.global,
+            Some(Duration::from_secs(30)),
+            "API agent 应有 30s 全局超时"
+        );
+        assert_eq!(
+            api_to.connect,
+            Some(Duration::from_secs(10)),
+            "API agent 应有 10s 建连超时"
+        );
         let tr_to = api.transfer_agent.config().timeouts();
-        assert_eq!(tr_to.global, None, "传输 agent 不应有全局超时(369MB 下载/2GB 上传会超时)");
-        assert_eq!(tr_to.connect, Some(Duration::from_secs(10)), "传输 agent 应有 10s 建连超时");
+        assert_eq!(
+            tr_to.global, None,
+            "传输 agent 不应有全局超时(369MB 下载/2GB 上传会超时)"
+        );
+        assert_eq!(
+            tr_to.connect,
+            Some(Duration::from_secs(10)),
+            "传输 agent 应有 10s 建连超时"
+        );
     }
 
     #[test]
@@ -1031,7 +1047,9 @@ mod tests {
     struct FailingParams;
     impl Serialize for FailingParams {
         fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
-            Err(serde::ser::Error::custom("intentional serialization failure"))
+            Err(serde::ser::Error::custom(
+                "intentional serialization failure",
+            ))
         }
     }
 

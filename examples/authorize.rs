@@ -27,7 +27,9 @@ fn main() {
         app_key = std::env::var("BAIDU_APP_KEY").unwrap_or_default();
     }
     if app_key.is_empty() {
-        eprintln!("错误: 缺少 --app-key=xxx 参数(你的开放平台应用 App Key,见 pan.baidu.com/union 控制台)");
+        eprintln!(
+            "错误: 缺少 --app-key=xxx 参数(你的开放平台应用 App Key,见 pan.baidu.com/union 控制台)"
+        );
         std::process::exit(1);
     }
 

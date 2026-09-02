@@ -16,6 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: 格式门禁
+        run: cargo fmt --check
+      - name: Clippy 门禁(警告即错误)
+        run: cargo clippy --all-targets -- -D warnings
       - name: 离线测试与 doc 测试
         run: cargo test

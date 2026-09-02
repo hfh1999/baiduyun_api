@@ -32,7 +32,9 @@ const RESET: &str = "\x1b[0m";
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let Some(key) = load_key() else {
-        eprintln!("{RED}错误: 未找到 BAIDU_ACCESS_TOKEN,请先运行 cargo run --example authorize{RESET}");
+        eprintln!(
+            "{RED}错误: 未找到 BAIDU_ACCESS_TOKEN,请先运行 cargo run --example authorize{RESET}"
+        );
         exit(1);
     };
     let api = YunApi::new(&key);
@@ -110,7 +112,13 @@ fn cmd_ls(api: &YunApi, rest: &[String]) -> Result<(), ApiError> {
         .max()
         .unwrap_or(0)
         .max(8);
-    println!("{:<n$}  {:>10}  {:<16}  {}", "名称", "大小", "修改时间(UTC)", "类型", n = name_w);
+    println!(
+        "{:<n$}  {:>10}  {:<16}  类型",
+        "名称",
+        "大小",
+        "修改时间(UTC)",
+        n = name_w
+    );
     for f in dirs {
         println!(
             "{BLUE}{:<n$}{RESET}  {:>10}  {:<16}  {BLUE}目录{RESET}",
@@ -231,7 +239,7 @@ fn cmd_search(api: &YunApi, rest: &[String]) -> Result<(), ApiError> {
         println!("{DIM}(无结果){RESET}");
         return Ok(());
     }
-    println!("{:<16}  {:<30}  {}", "fs_id", "名称", "路径");
+    println!("{:<16}  {:<30}  路径", "fs_id", "名称");
     for item in items.iter() {
         println!(
             "{:<16}  {:<30}  {}",
@@ -282,7 +290,8 @@ fn load_key() -> Option<String> {
     let content = std::fs::read_to_string(".env").ok()?;
     content.lines().find_map(|line| {
         let line = line.trim();
-        line.strip_prefix("BAIDU_ACCESS_TOKEN=").map(|v| v.trim().to_string())
+        line.strip_prefix("BAIDU_ACCESS_TOKEN=")
+            .map(|v| v.trim().to_string())
     })
 }
 

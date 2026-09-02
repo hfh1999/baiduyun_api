@@ -44,7 +44,9 @@ fn test_api_method_signatures() {
 
     assert!(api.get_files_list("/", 0, 100).is_err());
     assert!(api.get_files_info(&[123i64, 456i64]).is_err());
-    assert!(api.search_with_key("test", "/", false, 1, 50, true).is_err());
+    assert!(api
+        .search_with_key("test", "/", false, 1, 50, true)
+        .is_err());
 }
 
 #[test]
@@ -172,7 +174,10 @@ fn test_search() {
             "server_filename 不应为空,实际: {}",
             item.server_filename
         );
-        println!("item = {}, name = {}, path = {}", item.fs_id, item.server_filename, item.path);
+        println!(
+            "item = {}, name = {}, path = {}",
+            item.fs_id, item.server_filename, item.path
+        );
     }
 }
 
@@ -234,7 +239,13 @@ fn temp_path(prefix: &str) -> String {
         .unwrap()
         .as_nanos();
     let app_dir = load_app_name().unwrap_or_else(|| "bypy".to_string());
-    format!("/apps/{}/{}_{}_{}", app_dir, prefix, std::process::id(), nanos)
+    format!(
+        "/apps/{}/{}_{}_{}",
+        app_dir,
+        prefix,
+        std::process::id(),
+        nanos
+    )
 }
 
 #[test]
@@ -262,7 +273,7 @@ fn test_mkdir_remove_roundtrip() {
     );
 
     // 删除后应可重新创建(验证清理彻底)
-    api.remove(&[dir.clone()]).expect("删除应成功");
+    api.remove(std::slice::from_ref(&dir)).expect("删除应成功");
     api.mkdir(&dir).expect("删除后应可重新创建");
     api.remove(&[dir]).expect("清理应成功");
 }
@@ -287,7 +298,10 @@ fn test_mv_cp_rename_roundtrip() {
     // rename: a -> a_renamed
     api.rename(&a, "a_renamed").expect("rename 应成功");
     let a2 = format!("{}/a_renamed", base);
-    let list = api.get_files_list(&base, 0, 10).unwrap().collect::<Vec<_>>();
+    let list = api
+        .get_files_list(&base, 0, 10)
+        .unwrap()
+        .collect::<Vec<_>>();
     assert!(
         list.iter().any(|f| f.server_filename == "a_renamed"),
         "rename 后应看到 a_renamed"
@@ -304,7 +318,10 @@ fn test_mv_cp_rename_roundtrip() {
     // cp: b/a_renamed -> base/(复制回上层,源保留)
     let src = format!("{}/a_renamed", b);
     api.cp(&src, &base).expect("cp 应成功");
-    let list_base = api.get_files_list(&base, 0, 10).unwrap().collect::<Vec<_>>();
+    let list_base = api
+        .get_files_list(&base, 0, 10)
+        .unwrap()
+        .collect::<Vec<_>>();
     assert!(
         list_base.iter().any(|f| f.server_filename == "a_renamed"),
         "cp 后 base 下应看到 a_renamed"
@@ -428,9 +445,15 @@ fn test_trait_impl_coverage() {
 
     // FileId: i64 / FileInfo / SearchResult / FileInfoEx / &T 透传
     assert!(api.get_files_info(&[123i64]).is_err());
-    assert!(api.get_files_info(&[file_info.clone()]).is_err());
-    assert!(api.get_files_info(&[search_result.clone()]).is_err());
-    assert!(api.get_files_info(&[file_info_ex.clone()]).is_err());
+    assert!(api
+        .get_files_info(std::slice::from_ref(&file_info))
+        .is_err());
+    assert!(api
+        .get_files_info(std::slice::from_ref(&search_result))
+        .is_err());
+    assert!(api
+        .get_files_info(std::slice::from_ref(&file_info_ex))
+        .is_err());
     assert!(api.get_files_info(&[&file_info]).is_err());
     assert!(api.get_files_dlink_vec(&[&file_info]).is_err());
     assert!(api.get_file_dlink(123i64).is_err());
@@ -439,10 +462,10 @@ fn test_trait_impl_coverage() {
 
     // FilePath: str / String / FileInfo / SearchResult / FileInfoEx / &T 透传
     assert!(api.remove(&["/apps/a.txt"]).is_err());
-    assert!(api.remove(&[file_info.clone()]).is_err());
+    assert!(api.remove(std::slice::from_ref(&file_info)).is_err());
     assert!(api.remove(&[&file_info]).is_err());
-    assert!(api.remove(&[search_result.clone()]).is_err());
-    assert!(api.remove(&[file_info_ex.clone()]).is_err());
+    assert!(api.remove(std::slice::from_ref(&search_result)).is_err());
+    assert!(api.remove(std::slice::from_ref(&file_info_ex)).is_err());
     assert!(api.mv("/apps/a.txt", "/apps/dest").is_err());
     assert!(api.mv(file_info.clone(), "/apps/dest").is_err());
     assert!(api.mv(&file_info, "/apps/dest").is_err());
@@ -572,9 +595,7 @@ fn test_files_dlink_vec_real() {
     let api = YunApi::new(&key);
     let ids = collect_file_ids(&api, 2);
     assert_eq!(ids.len(), 2, "需要至少 2 个真实文件验证批量取链");
-    let links = api
-        .get_files_dlink_vec(&ids)
-        .expect("批量取链应成功");
+    let links = api.get_files_dlink_vec(&ids).expect("批量取链应成功");
     assert_eq!(links.len(), 2);
     for link in &links {
         assert!(link.starts_with("http"), "链接应以 http 开头");
@@ -596,11 +617,13 @@ fn test_download_resume() {
     };
     let api = YunApi::new(&key);
     let remote = temp_path("yunfs_resume");
-    let local_dst = std::env::temp_dir().join(format!("baiduyun_resume_{}.txt", std::process::id()));
+    let local_dst =
+        std::env::temp_dir().join(format!("baiduyun_resume_{}.txt", std::process::id()));
 
     // 上传 256KB 全字节值内容(大于单块,保证跨缓冲边界)
     let content: Vec<u8> = (0..=255u8).collect::<Vec<_>>().repeat(1024);
-    let local_src = std::env::temp_dir().join(format!("baiduyun_resume_src_{}.txt", std::process::id()));
+    let local_src =
+        std::env::temp_dir().join(format!("baiduyun_resume_src_{}.txt", std::process::id()));
     std::fs::write(&local_src, &content).expect("写本地临时文件应成功");
     api.upload(local_src.to_str().unwrap(), &remote, OnDup::Fail)
         .expect("上传应成功");
@@ -642,7 +665,10 @@ fn test_download_resume() {
         .download_with(
             &dlink,
             local_dst.to_str().unwrap(),
-            DownloadOpts { offset: half as u64, threads: 1 },
+            DownloadOpts {
+                offset: half as u64,
+                threads: 1,
+            },
         )
         .expect("断点续传应成功");
     assert_eq!(
@@ -681,7 +707,8 @@ fn test_download_parallel() {
 
     // 1MB 全字节值内容(8 块 × 128KB)
     let content: Vec<u8> = (0..=255u8).collect::<Vec<_>>().repeat(4096);
-    let local_src = std::env::temp_dir().join(format!("baiduyun_par_src_{}.txt", std::process::id()));
+    let local_src =
+        std::env::temp_dir().join(format!("baiduyun_par_src_{}.txt", std::process::id()));
     std::fs::write(&local_src, &content).expect("写本地临时文件应成功");
     api.upload(local_src.to_str().unwrap(), &remote, OnDup::Fail)
         .expect("上传应成功");
@@ -702,7 +729,10 @@ fn test_download_parallel() {
         .download_with(
             &dlink,
             local_dst.to_str().unwrap(),
-            DownloadOpts { offset: 0, threads: 8 },
+            DownloadOpts {
+                offset: 0,
+                threads: 8,
+            },
         )
         .expect("分块并发下载应成功");
     assert_eq!(bytes as usize, content.len(), "并发下载字节数应完整");
@@ -750,7 +780,11 @@ fn test_download_large_exceeds_api_timeout() {
         println!("skip: 网盘中无 >=300MB 文件,无法验证超时语义(Desktop.7z 曾符合)");
         return;
     };
-    println!("目标: {} ({}MB),预计下载超过 API 30s 超时", file.server_filename, size / 1024 / 1024);
+    println!(
+        "目标: {} ({}MB),预计下载超过 API 30s 超时",
+        file.server_filename,
+        size / 1024 / 1024
+    );
     let dlink = api.get_file_dlink(&file).expect("取链应成功");
     let dst = std::env::temp_dir().join(format!("baiduyun_large_{}.txt", std::process::id()));
     let started = std::time::Instant::now();
@@ -791,9 +825,11 @@ fn test_yunfs_download_dir() {
     let local_b = std::env::temp_dir().join(format!("yunfs_dir_b_{}.txt", std::process::id()));
     std::fs::write(&local_a, b"content of file a").unwrap();
     std::fs::write(&local_b, b"content of file b in sub dir").unwrap();
-    fs.upload(local_a.to_str().unwrap(), "a.txt").expect("上传 a.txt 应成功");
+    fs.upload(local_a.to_str().unwrap(), "a.txt")
+        .expect("上传 a.txt 应成功");
     fs.mkdir("sub").expect("mkdir sub 应成功");
-    fs.upload(local_b.to_str().unwrap(), "sub/b.txt").expect("上传 sub/b.txt 应成功");
+    fs.upload(local_b.to_str().unwrap(), "sub/b.txt")
+        .expect("上传 sub/b.txt 应成功");
 
     // 递归下载到本地临时目录
     let local_root = std::env::temp_dir().join(format!("yunfs_dir_out_{}", std::process::id()));
@@ -880,12 +916,13 @@ fn test_download_roundtrip() {
     let api = YunApi::new(&key);
     let remote = temp_path("yunfs_down");
     let file_name = remote.rsplit('/').next().unwrap().to_string();
-    let local_src = std::env::temp_dir().join(format!("baiduyun_down_src_{}.txt", std::process::id()));
-    let local_dst = std::env::temp_dir().join(format!("baiduyun_down_dst_{}.txt", std::process::id()));
+    let local_src =
+        std::env::temp_dir().join(format!("baiduyun_down_src_{}.txt", std::process::id()));
+    let local_dst =
+        std::env::temp_dir().join(format!("baiduyun_down_dst_{}.txt", std::process::id()));
 
     // 内容已知的上传载体
-    let content: Vec<u8> = (0..=255).map(|i| i as u8).collect::<Vec<_>>()
-        .repeat(64); // 256B * 64 = 16KB,覆盖全部字节值
+    let content: Vec<u8> = (0..=255).map(|i| i as u8).collect::<Vec<_>>().repeat(64); // 256B * 64 = 16KB,覆盖全部字节值
     std::fs::write(&local_src, &content).expect("写本地临时文件应成功");
 
     // 上传 -> 定位 -> 取链 -> 下载

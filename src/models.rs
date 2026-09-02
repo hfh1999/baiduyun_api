@@ -386,6 +386,9 @@ pub struct DownloadOpts {
 
 impl Default for DownloadOpts {
     fn default() -> Self {
-        DownloadOpts { offset: 0, threads: 1 }
+        DownloadOpts {
+            offset: 0,
+            threads: 1,
+        }
     }
 }

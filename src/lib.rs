@@ -114,7 +114,10 @@ mod models;
 pub mod util;
 mod yunapi;
 
-pub use models::{UserInfo, QuotaInfo, FileInfo, FileInfoEx, SearchResult, FileInfoIter, FileId, Thumbs, FilePath, OnDup, UploadResult, DownloadOpts};
+pub use models::{
+    DownloadOpts, FileId, FileInfo, FileInfoEx, FileInfoIter, FilePath, OnDup, QuotaInfo,
+    SearchResult, Thumbs, UploadResult, UserInfo,
+};
 
 #[cfg(test)]
 mod tests;

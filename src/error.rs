@@ -217,21 +217,40 @@ mod tests {
     fn test_api_error_known_error_codes() {
         // 映射表:常量定义的码应有对应友好文案
         let test_cases = vec![
-            (ApiError::E_ARG, "argument error, please check your argument."),
-            (ApiError::E_AUTH, "authentication failed, please check your access token."),
+            (
+                ApiError::E_ARG,
+                "argument error, please check your argument.",
+            ),
+            (
+                ApiError::E_AUTH,
+                "authentication failed, please check your access token.",
+            ),
             (ApiError::E_INVALID_NAME, "invalid filename or path."),
             (ApiError::E_ALREADY_EXISTS, "path already exists."),
             (ApiError::E_NOT_FOUND, "file or directory not found."),
-            (ApiError::E_FREQ, "hit interface frequency control, please slow down."),
-            (ApiError::E_USER_NOT_FOUND, "user not found or no permission."),
+            (
+                ApiError::E_FREQ,
+                "hit interface frequency control, please slow down.",
+            ),
+            (
+                ApiError::E_USER_NOT_FOUND,
+                "user not found or no permission.",
+            ),
             (ApiError::E_FILE_EXISTS, "file already exists."),
-            (ApiError::E_PATH_UNAUTHORIZED, "path not authorized (upload requires /apps/{app}/)."),
+            (
+                ApiError::E_PATH_UNAUTHORIZED,
+                "path not authorized (upload requires /apps/{app}/).",
+            ),
             (ApiError::E_RISK_CONTROL, "request blocked by risk control."),
             (ApiError::E_INTERNAL, "Api inner error."),
         ];
         for (errno, expected_prompt) in test_cases {
             let error = ApiError::new(errno, "test");
-            assert_eq!(error.ret_prompt(), expected_prompt, "errno={errno} 文案应匹配");
+            assert_eq!(
+                error.ret_prompt(),
+                expected_prompt,
+                "errno={errno} 文案应匹配"
+            );
         }
     }
 
@@ -254,7 +273,10 @@ mod tests {
         let error = result.context("open local file").unwrap_err();
         assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
         let display = format!("{}", error);
-        assert!(display.contains("open local file: no such file"), "实际: {display}");
+        assert!(
+            display.contains("open local file: no such file"),
+            "实际: {display}"
+        );
     }
 
     #[test]

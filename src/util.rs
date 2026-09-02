@@ -136,7 +136,9 @@ impl<'a> YunFs<'a> {
                 Component::ParentDir => {
                     segments.pop();
                 }
-                Component::Normal(seg) => segments.push(seg.to_str().unwrap_or_default().to_string()),
+                Component::Normal(seg) => {
+                    segments.push(seg.to_str().unwrap_or_default().to_string())
+                }
                 Component::Prefix(_) => {
                     return Err(ApiError::from(
                         "path resolve Error: windows prefix not accepted.",
@@ -178,16 +180,12 @@ impl<'a> YunFs<'a> {
         let mut ret_vec: Vec<FileInfo> = Vec::new();
         let mut start = 0;
         loop {
-            let tmp_list =
-                match self
-                    .api
-                    .get_files_list(&self.current_path, start, list_len)
-                {
-                    Ok(list) => list,
-                    Err(error) => {
-                        return Err(error);
-                    }
-                };
+            let tmp_list = match self.api.get_files_list(&self.current_path, start, list_len) {
+                Ok(list) => list,
+                Err(error) => {
+                    return Err(error);
+                }
+            };
             let mut tmp_vec: Vec<FileInfo> = tmp_list.collect();
             let len = tmp_vec.len();
             ret_vec.append(&mut tmp_vec);
@@ -295,10 +293,9 @@ impl<'a> YunFs<'a> {
                 if let Some(parent) = local_path.parent() {
                     std::fs::create_dir_all(parent).context("create local dir")?;
                 }
-                let local_str =
-                    local_path
-                        .to_str()
-                        .ok_or_else(|| ApiError::from("local path is not valid utf-8"))?;
+                let local_str = local_path
+                    .to_str()
+                    .ok_or_else(|| ApiError::from("local path is not valid utf-8"))?;
                 total += self.api.download(&link, local_str)?;
             }
         }
@@ -349,7 +346,9 @@ impl<'a> YunFs<'a> {
     ///注意:上传接口要求目标位于 `/apps/{自己的应用名}/` 下
     pub fn upload(&mut self, local_path: &str, file_name: &str) -> Result<(), ApiError> {
         let remote = self.resolve_path(file_name)?;
-        self.api.upload(local_path, &remote, OnDup::Fail).map(|_| ())
+        self.api
+            .upload(local_path, &remote, OnDup::Fail)
+            .map(|_| ())
     }
 }
 
@@ -437,9 +436,15 @@ mod tests {
     fn test_yunfs_resolve_relative() {
         let api = YunApi::new("test_token");
         let fs = make_fs_at(&api, "/apps/bypy");
-        assert_eq!(fs.resolve_path("./dir1/dir2").unwrap(), "/apps/bypy/dir1/dir2");
+        assert_eq!(
+            fs.resolve_path("./dir1/dir2").unwrap(),
+            "/apps/bypy/dir1/dir2"
+        );
         assert_eq!(fs.resolve_path("../dir1").unwrap(), "/apps/dir1");
-        assert_eq!(fs.resolve_path("dir1/dir2").unwrap(), "/apps/bypy/dir1/dir2");
+        assert_eq!(
+            fs.resolve_path("dir1/dir2").unwrap(),
+            "/apps/bypy/dir1/dir2"
+        );
         assert_eq!(fs.resolve_path("dir1/").unwrap(), "/apps/bypy/dir1");
         assert_eq!(fs.resolve_path("src.txt").unwrap(), "/apps/bypy/src.txt");
         assert_eq!(fs.resolve_path("a/../b").unwrap(), "/apps/bypy/b");
