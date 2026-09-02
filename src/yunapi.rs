@@ -1,4 +1,4 @@
-use super::error::ApiError;
+use super::error::{ApiError, ContextExt};
 use super::models::*;
 use serde::Serialize;
 use serde_json::Value;
@@ -21,6 +21,24 @@ enum YunNode {
     #[allow(dead_code)]
     Create2, //3rd
 }
+impl YunNode {
+    /// 请求对应的百度 method 名(供错误场景标注,替代 URL——URL 含 token 不能入文案)
+    fn method_name(&self) -> &'static str {
+        match self {
+            YunNode::GetUserInfo => "uinfo",
+            YunNode::GetQuotaInfo => "quota",
+            YunNode::GetFileList => "file list",
+            YunNode::GetFileInfo => "filemetas",
+            YunNode::Search => "search",
+            YunNode::FileManager => "filemanager",
+            YunNode::Create => "create",
+            YunNode::LocateUpload => "locateupload",
+            YunNode::PreCreate => "precreate",
+            YunNode::UpLoad => "upload",
+            YunNode::Create2 => "create",
+        }
+    }
+}
 
 ///要使用本api,必须使用YunApi结构体
 pub struct YunApi {
@@ -36,9 +54,7 @@ pub struct YunApi {
 /// `status` 用 u16(HTTP 状态码纯数字),不依赖任何 HTTP 客户端类型——同步(ureq)与异步(reqwest)后端共用
 fn parse_response(status: u16, text: String) -> Result<Value, ApiError> {
     if (200..300).contains(&status) {
-        return serde_json::from_str(&text).map_err(|e| {
-            ApiError::from(format!("parse json error: {}", e).as_str())
-        });
+        return serde_json::from_str(&text).context("parse json");
     }
     if let Ok(value) = serde_json::from_str::<Value>(&text) {
         // 两种错误字段:xpan 系列用 errno/errmsg,pcs 系列(upload 等)用 error_code/error_msg
@@ -113,7 +129,7 @@ impl YunApi {
     fn get_addr<T: Serialize>(&self, in_node: YunNode, params: &T) -> Result<String, ApiError> {
         let node_addr = get_node_addr(in_node);
         let query_string = to_string(params)
-            .map_err(|e| ApiError::from(format!("serialize params error: {}", e).as_str()))?;
+            .context("serialize params")?;
 
         if node_addr.contains('?') {
             let mut addr = format!("{}&access_token={}", node_addr, self.access_token);
@@ -135,11 +151,7 @@ impl YunApi {
             ApiError::from("response has no list field or it is not an array")
         })?;
         list.iter()
-            .map(|item| {
-                serde_json::from_value(item.clone()).map_err(|e| {
-                    ApiError::from(format!("malformed list item: {}", e).as_str())
-                })
-            })
+            .map(|item| serde_json::from_value(item.clone()).context("malformed list item"))
             .collect()
     }
     /// 检查响应 errno 是否为 0;不为 0 则返回透传百度 errmsg 的错误
@@ -159,18 +171,19 @@ impl YunApi {
     }
     /// GET 请求,参数进 query
     fn request_get<T: Serialize>(&self, in_node: YunNode, params: &T) -> Result<Value, ApiError> {
+        let node_name = in_node.method_name();
         let addr = self.get_addr(in_node, params)?;
         let mut response = self
             .agent
             .get(&addr)
             .header("User-Agent", "pan.baidu.com")
             .call()
-            .map_err(|e| ApiError::from(format!("send request error: {}", e).as_str()))?;
+            .context(format!("send request({node_name})"))?;
         let status = response.status().as_u16();
         let text = response
             .body_mut()
             .read_to_string()
-            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
+            .context("decode response text")?;
         parse_response(status, text)
     }
     /// POST 请求,query_params 进 query、body_params 进 form body
@@ -182,21 +195,22 @@ impl YunApi {
         query_params: &Q,
         body_params: &B,
     ) -> Result<Value, ApiError> {
+        let node_name = in_node.method_name();
         let addr = self.get_addr(in_node, query_params)?;
         let body = to_string(body_params)
-            .map_err(|e| ApiError::from(format!("serialize params error: {}", e).as_str()))?;
+            .context("serialize params")?;
         let mut response = self
             .agent
             .post(&addr)
             .header("User-Agent", "pan.baidu.com")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .send(body)
-            .map_err(|e| ApiError::from(format!("send request error: {}", e).as_str()))?;
+            .context(format!("send request({node_name})"))?;
         let status = response.status().as_u16();
         let text = response
             .body_mut()
             .read_to_string()
-            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
+            .context("decode response text")?;
         parse_response(status, text)
     }
     ///得到用户的基本信息
@@ -215,8 +229,7 @@ impl YunApi {
         let params = EmptyParams;
         let value = self.request_get(YunNode::GetUserInfo, &params)?;
         Self::check_errno(&value)?;
-        serde_json::from_value(value)
-            .map_err(|e| ApiError::from(format!("malformed user info: {}", e).as_str()))
+        serde_json::from_value(value).context("parse user info")
     }
 
     ///得到网盘的空间占用信息
@@ -226,8 +239,7 @@ impl YunApi {
         let params = EmptyParams;
         let value = self.request_get(YunNode::GetQuotaInfo, &params)?;
         Self::check_errno(&value)?;
-        serde_json::from_value(value)
-            .map_err(|e| ApiError::from(format!("malformed quota info: {}", e).as_str()))
+        serde_json::from_value(value).context("parse quota info")
     }
 
     ///查询文件信息,可以获取下载链接之用.
@@ -275,10 +287,10 @@ impl YunApi {
         limit: i64,
     ) -> Result<FileInfoIter, ApiError> {
         if !(0..=10000).contains(&limit) {
-            return Err(ApiError::new(8989, "limit arg error."));
+            return Err(ApiError::new(ApiError::E_INTERNAL, "limit arg error."));
         }
         if start < 0 {
-            return Err(ApiError::new(8989, "start arg error."));
+            return Err(ApiError::new(ApiError::E_INTERNAL, "start arg error."));
         }
         let params = GetFileListParams {
             dir: dir.to_string(),
@@ -364,10 +376,10 @@ impl YunApi {
             web: in_web as i64,
         };
         if in_page < 1 {
-            return Err(ApiError::new(8989, "Page is less than 1."));
+            return Err(ApiError::new(ApiError::E_INTERNAL, "Page is less than 1."));
         }
         if in_num > 1000 {
-            return Err(ApiError::new(8989, "Num is more than 1000."));
+            return Err(ApiError::new(ApiError::E_INTERNAL, "Num is more than 1000."));
         }
         let value = self.request_get(YunNode::Search, &params)?;
         Self::check_errno(&value)?;
@@ -504,7 +516,7 @@ impl YunApi {
             path: remote_path,
             ondup,
         })
-        .map_err(|e| ApiError::from(format!("serialize upload query error: {}", e).as_str()))?;
+        .context("serialize upload query")?;
         let upload_addr = format!(
             "{}/rest/2.0/pcs/file?method=upload&access_token={}&{}",
             host, self.access_token, query
@@ -512,20 +524,18 @@ impl YunApi {
         // multipart 表单(ureq: Form::file 流式发送,2GB 内不读进内存)
         let form = ureq::unversioned::multipart::Form::new()
             .file("file", local_path)
-            .map_err(|e| {
-                ApiError::from(format!("open local file for upload error: {}", e).as_str())
-            })?;
+            .context("open local file for upload")?;
         let mut response = self
             .agent
             .post(&upload_addr)
             .header("User-Agent", "pan.baidu.com")
             .send(form)
-            .map_err(|e| ApiError::from(format!("send upload request error: {}", e).as_str()))?;
+            .context("send upload request")?;
         let status = response.status().as_u16();
         let text = response
             .body_mut()
             .read_to_string()
-            .map_err(|e| ApiError::from(format!("decode text error: {}", e).as_str()))?;
+            .context("decode response text")?;
         let value = parse_response(status, text)?;
         // 上传响应的错误字段是 error_code/error_msg(非 errno)
         let code = value["error_code"].as_i64().unwrap_or(0);
@@ -535,8 +545,7 @@ impl YunApi {
                 .unwrap_or("no error_msg from baidu");
             return Err(ApiError::new(code, msg));
         }
-        serde_json::from_value(value)
-            .map_err(|e| ApiError::from(format!("malformed upload result: {}", e).as_str()))
+        serde_json::from_value(value).context("parse upload result")
     }
 
     /// 下载文件到本地(自动拼接 access_token,流式落盘,覆盖已存在)
@@ -582,7 +591,7 @@ impl YunApi {
         }
         let text = body
             .read_to_string()
-            .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
+            .context("decode download body")?;
         // parse_response 对非 2xx 恒为 Err;Ok 分支仅作不可达防御
         Err(match parse_response(status, text) {
             Err(e) => e,
@@ -597,9 +606,7 @@ impl YunApi {
         if offset > 0 {
             request = request.header("Range", &format!("bytes={offset}-"));
         }
-        let mut response = request.call().map_err(|e| {
-            ApiError::from(format!("send download request error: {}", e).as_str())
-        })?;
+        let mut response = request.call().context("send download request")?;
         let status = response.status().as_u16();
         Self::check_download_response(status, response.body_mut())?;
         // 断点双态:206 + offset>0 -> append 续写;200(服务器忽略 Range)或从头 -> truncate
@@ -613,7 +620,7 @@ impl YunApi {
         }
         let mut file = options
             .open(dst)
-            .map_err(|e| ApiError::from(format!("open local file error: {}", e).as_str()))?;
+            .context("open local file")?;
         Self::stream_to_file(response.body_mut().as_reader(), &mut file)
     }
 
@@ -634,14 +641,12 @@ impl YunApi {
             .header("User-Agent", "pan.baidu.com")
             .header("Range", "bytes=0-0")
             .call()
-            .map_err(|e| ApiError::from(format!("send download request error: {}", e).as_str()))?;
+            .context("send download request")?;
         let status = probe.status().as_u16();
         Self::check_download_response(status, probe.body_mut())?;
         if status != 206 {
             // 服务器不支持 Range:回退单连接(读完探测 body 以释放连接)
-            let _ = probe.body_mut().read_to_vec().map_err(|e| {
-                ApiError::from(format!("decode download error: {}", e).as_str())
-            })?;
+            let _ = probe.body_mut().read_to_vec().context("decode download body")?;
             return self.download_single(dlink, dst, offset);
         }
         let total: u64 = probe
@@ -661,7 +666,7 @@ impl YunApi {
         // 2. 预置文件长度(create/set_len 生成空洞文件,各块 seek 写入)
         std::fs::File::create(dst)
             .and_then(|f| f.set_len(total))
-            .map_err(|e| ApiError::from(format!("open local file error: {}", e).as_str()))?;
+            .context("open local file")?;
 
         // 3. 切块并发下载
         let len = total - offset;
@@ -707,7 +712,7 @@ impl YunApi {
             .header("User-Agent", "pan.baidu.com")
             .header("Range", &format!("bytes={}-{}", start, start + blk_len - 1))
             .call()
-            .map_err(|e| ApiError::from(format!("send download request error: {}", e).as_str()))?;
+            .context("send download request")?;
         let status = response.status().as_u16();
         Self::check_download_response(status, response.body_mut())?;
         if status != 206 {
@@ -722,10 +727,10 @@ impl YunApi {
         options.write(true);
         let mut file = options
             .open(dst)
-            .map_err(|e| ApiError::from(format!("open local file error: {}", e).as_str()))?;
+            .context("open local file")?;
         use std::io::Seek;
         file.seek(std::io::SeekFrom::Start(start))
-            .map_err(|e| ApiError::from(format!("seek local file error: {}", e).as_str()))?;
+            .context("seek local file")?;
         Self::stream_to_file(response.body_mut().as_reader(), &mut file)
     }
 
@@ -753,9 +758,7 @@ impl YunApi {
             if n == 0 {
                 break; // EOF = 下载完成
             }
-            file.write_all(&buf[..n]).map_err(|e| {
-                ApiError::from(format!("write local file error: {}", e).as_str())
-            })?;
+            file.write_all(&buf[..n]).context("write local file")?;
             total += n as u64;
         }
         Ok(total)
@@ -788,7 +791,7 @@ mod tests {
     fn test_check_errno_error_with_errmsg() {
         let value = serde_json::json!({"errno": -6, "errmsg": "invalid token"});
         let error = YunApi::check_errno(&value).unwrap_err();
-        assert_eq!(error.ret_errno(), -6);
+        assert_eq!(error.ret_errno(), ApiError::E_AUTH);
         let display = format!("{}", error);
         assert!(display.contains("invalid token"));
     }
@@ -797,14 +800,14 @@ mod tests {
     fn test_check_errno_missing() {
         let value = serde_json::json!({"list": []});
         let error = YunApi::check_errno(&value).unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
     }
 
     #[test]
     fn test_parse_list_missing() {
         let value = serde_json::json!({"errno": 0});
         let error = YunApi::parse_list::<serde_json::Value>(&value).unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
     }
 
     #[test]
@@ -812,7 +815,7 @@ mod tests {
         // 缺 path 字段的 FileInfo 无法反序列化
         let value = serde_json::json!({"errno": 0, "list": [{"fs_id": 1}]});
         let error = YunApi::parse_list::<FileInfo>(&value).unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
         let display = format!("{}", error);
         assert!(display.contains("malformed list item"));
     }
@@ -926,7 +929,7 @@ mod tests {
         let text = r#"{"error_code": 31061, "error_msg": "file already exists"}"#.to_string();
         let result = parse_response(status, text);
         let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 31061);
+        assert_eq!(error.ret_errno(), ApiError::E_FILE_EXISTS);
         assert!(format!("{}", error).contains("file already exists"));
     }
 
@@ -936,7 +939,7 @@ mod tests {
         let text = r#"{"errno": 31034, "errmsg": "hit frequency control"}"#.to_string();
         let result = parse_response(status, text);
         let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 31034);
+        assert_eq!(error.ret_errno(), ApiError::E_FREQ);
         let display = format!("{}", error);
         assert!(display.contains("hit frequency control"));
     }
@@ -947,7 +950,7 @@ mod tests {
         let text = "<html>502 Bad Gateway</html>".to_string();
         let result = parse_response(status, text);
         let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
         let display = format!("{}", error);
         assert!(display.contains("HTTP status 502"));
     }
@@ -991,9 +994,9 @@ mod tests {
         let text = "not json at all".to_string();
         let result = parse_response(status, text);
         let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
         let display = format!("{}", error);
-        assert!(display.contains("parse json error"));
+        assert!(display.contains("parse json"));
     }
 
     /// 用于触发 get_addr 参数序列化失败的测试类型
@@ -1010,9 +1013,9 @@ mod tests {
         let result = api.get_addr(YunNode::GetUserInfo, &FailingParams);
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
         let display = format!("{}", error);
-        assert!(display.contains("serialize params error"));
+        assert!(display.contains("serialize params"));
     }
 
     #[test]

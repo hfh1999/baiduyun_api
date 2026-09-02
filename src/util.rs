@@ -8,12 +8,13 @@
 //!
 //!所有错误处理统一使用 [ApiError]
 
+use super::error::ContextExt;
 use super::ApiError;
 use super::FileInfo;
 use super::FileInfoIter;
 use super::OnDup;
 use super::YunApi;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 /// 提供方便的容量大小转换
 ///
@@ -58,14 +59,16 @@ pub fn get_vip_type_str(vip_type: i64) -> Result<String, ApiError> {
 ///所有操作返回 [ApiError] 类型的错误
 pub struct YunFs<'a> {
     api: &'a YunApi,
-    current_path: PathBuf,
+    ///远端当前目录(Unix 风格绝对路径,恒为 UTF-8——用 String 而非 PathBuf,
+    ///根除 to_str().unwrap() 类理论不可达 unwrap)
+    current_path: String,
 }
 impl<'a> YunFs<'a> {
     ///创建一个YunFs结构体
     pub fn new(api_ref: &'a YunApi) -> YunFs<'a> {
         YunFs {
             api: api_ref,
-            current_path: PathBuf::from("/"), // 总是以绝对路径的形式
+            current_path: String::from("/"), // 总是以绝对路径的形式
         }
     }
 
@@ -75,7 +78,7 @@ impl<'a> YunFs<'a> {
     ///后续 [ls](YunFs::ls) 等操作才会报错(与本地 shell 语义一致)
     ///
     pub fn pwd(&self) -> String {
-        self.current_path.to_str().unwrap().into()
+        self.current_path.clone()
     }
     fn check_dir_fmt(dir_str: &str) -> Result<(), ApiError> {
         // 网盘路径是 Unix 风格: 反斜杠(Windows 分隔符)一律拒绝
@@ -120,8 +123,6 @@ impl<'a> YunFs<'a> {
                 Vec::new()
             } else {
                 self.current_path
-                    .to_str()
-                    .unwrap()
                     .split('/')
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
@@ -165,7 +166,7 @@ impl<'a> YunFs<'a> {
         //debug;;; println!("resolved:path {}",dir_resolved);
         if self.api.get_files_list(&dir_resolved, 0, 0).is_ok() {
             //将本地表示也改变为目录切换后的版本
-            self.current_path = PathBuf::from(dir_resolved);
+            self.current_path = dir_resolved;
             Ok(())
         } else {
             Err(ApiError::from("Error:chdir():the directory may not exist."))
@@ -184,7 +185,7 @@ impl<'a> YunFs<'a> {
             let tmp_list =
                 match self
                     .api
-                    .get_files_list(self.current_path.to_str().unwrap(), start, list_len)
+                    .get_files_list(&self.current_path, start, list_len)
                 {
                     Ok(list) => list,
                     Err(error) => {
@@ -247,7 +248,12 @@ impl<'a> YunFs<'a> {
         let file = list
             .into_iter()
             .find(|f| f.server_filename == file_name)
-            .ok_or_else(|| ApiError::from(format!("当前目录未找到文件: {file_name}").as_str()))?;
+            .ok_or_else(|| {
+                ApiError::new(
+                    ApiError::E_NOT_FOUND,
+                    &format!("当前目录未找到文件: {file_name}"),
+                )
+            })?;
         let dlink = self.api.get_file_dlink(file)?;
         self.api.download(&dlink, local)
     }
@@ -264,15 +270,16 @@ impl<'a> YunFs<'a> {
         let mut empty_dirs: Vec<String> = Vec::new();
         Self::collect_tree(self.api, &abs_dir, "", &mut files, &mut empty_dirs)?;
         if files.is_empty() && empty_dirs.is_empty() {
-            return Err(ApiError::from(format!("远端目录不存在: {abs_dir}").as_str()));
+            return Err(ApiError::new(
+                ApiError::E_NOT_FOUND,
+                &format!("远端目录不存在: {abs_dir}"),
+            ));
         }
 
         let root = Path::new(local_dir);
-        std::fs::create_dir_all(root)
-            .map_err(|e| ApiError::from(format!("create local dir error: {}", e).as_str()))?;
+        std::fs::create_dir_all(root).context("create local dir")?;
         for d in &empty_dirs {
-            std::fs::create_dir_all(root.join(d))
-                .map_err(|e| ApiError::from(format!("create local dir error: {}", e).as_str()))?;
+            std::fs::create_dir_all(root.join(d)).context("create local dir")?;
         }
 
         let mut total: u64 = 0;
@@ -290,9 +297,7 @@ impl<'a> YunFs<'a> {
                     .clone();
                 let local_path = root.join(rel);
                 if let Some(parent) = local_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        ApiError::from(format!("create local dir error: {}", e).as_str())
-                    })?;
+                    std::fs::create_dir_all(parent).context("create local dir")?;
                 }
                 let local_str =
                     local_path
@@ -378,7 +383,7 @@ use std::io::Write;
 /// 请使用 [crate::YunApi::download](crate::YunApi::download)(token 内部持有,流式落盘,零 panic)
 /// 或 [YunFs::download](YunFs::download)(YunFs 内直接按文件名下载)。
 /// 本函数保留仅为 0.3.x 兼容,存在 panic 风险与追加写入问题。
-#[deprecated(note = "请使用 YunApi::download / YunFs::download(见 docs/refactor-download.md)")]
+#[deprecated(note = "请使用 YunApi::download / YunFs::download(见 docs/refactor-download.md);本函数计划 0.4 版本移除")]
 pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_debug: bool) {
     let mut has_downloaded: i64 = 0;
     let size: i32 = 1024 * 1024 * block_size; //每个range1MB大小,100MB
@@ -491,7 +496,7 @@ mod tests {
         let result = get_vip_type_str(999);
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
         let display = format!("{}", error);
         assert!(display.contains("Not Support vip_type."));
     }
@@ -499,7 +504,7 @@ mod tests {
     /// 构造一个 current_path 为指定路径的 YunFs(测试辅助,不涉及网络)
     fn make_fs_at<'a>(api: &'a YunApi, path: &str) -> YunFs<'a> {
         let mut fs = YunFs::new(api);
-        fs.current_path = PathBuf::from(path);
+        fs.current_path = String::from(path);
         fs
     }
 
@@ -633,7 +638,7 @@ mod tests {
         let result = YunFs::check_dir_fmt("dir1\\dir2");
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
         let display = format!("{}", error);
         assert!(display.contains("path resolve Error"));
         assert!(display.contains("\\"));
@@ -644,7 +649,7 @@ mod tests {
         let result = YunFs::check_dir_fmt("//dir1");
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert_eq!(error.ret_errno(), 8989);
+        assert_eq!(error.ret_errno(), ApiError::E_INTERNAL);
         let display = format!("{}", error);
         assert!(display.contains("path resolve Error"));
         assert!(display.contains("/"));

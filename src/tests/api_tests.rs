@@ -143,7 +143,7 @@ fn error_key() {
     };
     assert_eq!(
         error.ret_errno(),
-        -6,
+        crate::ApiError::E_AUTH,
         "无效 token 应被百度拒绝并返回 errno=-6,实际错误: {}",
         error
     );
@@ -255,7 +255,11 @@ fn test_mkdir_remove_roundtrip() {
     // 重复创建应报错(-8 已存在)
     let dup = api.mkdir(&dir);
     assert!(dup.is_err(), "重复创建应失败");
-    assert_eq!(dup.unwrap_err().ret_errno(), -8, "重复创建应返回 errno=-8");
+    assert_eq!(
+        dup.unwrap_err().ret_errno(),
+        crate::ApiError::E_ALREADY_EXISTS,
+        "重复创建应返回 errno=-8"
+    );
 
     // 删除后应可重新创建(验证清理彻底)
     api.remove(&[dir.clone()]).expect("删除应成功");
@@ -348,7 +352,7 @@ fn test_upload_roundtrip() {
     let dup_err = dup.expect_err("重复上传应失败");
     assert_eq!(
         dup_err.ret_errno(),
-        31061,
+        crate::ApiError::E_FILE_EXISTS,
         "重复上传应返回 errno=31061,实际: {}",
         dup_err
     );
