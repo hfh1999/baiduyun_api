@@ -3,6 +3,7 @@ use super::models::*;
 use serde::Serialize;
 use serde_json::Value;
 use serde_urlencoded::to_string;
+use std::io::{Read, Write};
 
 enum YunNode {
     GetUserInfo,
@@ -537,6 +538,71 @@ impl YunApi {
         serde_json::from_value(value)
             .map_err(|e| ApiError::from(format!("malformed upload result: {}", e).as_str()))
     }
+
+    /// 下载文件到本地(自动拼接 access_token,流式落盘,覆盖已存在)
+    ///
+    /// - `dlink` 来自 [Self::get_file_dlink] / [Self::get_files_dlink_vec](链接 8 小时有效)
+    /// - `dst` 本地文件路径;**已存在会被覆盖**(非续写)
+    /// - 返回实际下载字节数,可与远端 `FileInfo.size` 对比校验完整性
+    ///
+    /// 实现说明: 固定 64KB 缓冲流式落盘,内存占用与文件大小无关;
+    /// 下载失败时百度返回 JSON 错误体,经 `parse_response` 透传 errno(错误直透)。
+    pub fn download(&self, dlink: &str, dst: &str) -> Result<u64, ApiError> {
+        let url = Self::with_access_token(dlink, &self.access_token);
+        let mut response = self
+            .agent
+            .get(&url)
+            .header("User-Agent", "pan.baidu.com")
+            .call()
+            .map_err(|e| ApiError::from(format!("send download request error: {}", e).as_str()))?;
+        let status = response.status().as_u16();
+        if !(200..300).contains(&status) {
+            // 非 2xx:body 是 JSON 错误体(实测 403 -> {"error_code":31045,...})
+            let text = response
+                .body_mut()
+                .read_to_string()
+                .map_err(|e| ApiError::from(format!("decode download error: {}", e).as_str()))?;
+            return parse_response(status, text).map(|_| 0);
+        }
+        // 流式落盘:create 即覆盖(truncate);64KB 缓冲循环,内存恒定
+        let mut file = std::fs::File::create(dst)
+            .map_err(|e| ApiError::from(format!("open local file error: {}", e).as_str()))?;
+        let mut reader = response.body_mut().as_reader();
+        let mut buf = [0u8; 64 * 1024];
+        let mut total: u64 = 0;
+        loop {
+            let n = match reader.read(&mut buf) {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    return Err(ApiError::from(format!(
+                        "read download body error: {}",
+                        e
+                    )
+                    .as_str()))
+                }
+            };
+            if n == 0 {
+                break; // EOF = 下载完成
+            }
+            file.write_all(&buf[..n]).map_err(|e| {
+                ApiError::from(format!("write local file error: {}", e).as_str())
+            })?;
+            total += n as u64;
+        }
+        Ok(total)
+    }
+
+    /// 下载 URL 拼接: dlink 必须带 access_token(实测缺失返回 403 user not exists)
+    ///
+    /// 已带 `access_token` 参数时不重复追加
+    fn with_access_token(dlink: &str, token: &str) -> String {
+        if dlink.contains("access_token=") {
+            dlink.to_string()
+        } else {
+            format!("{dlink}&access_token={token}")
+        }
+    }
 }
 
 /// 上传请求的 query 参数(path 需 urlencode)
@@ -716,6 +782,22 @@ mod tests {
         assert_eq!(error.ret_errno(), 8989);
         let display = format!("{}", error);
         assert!(display.contains("HTTP status 502"));
+    }
+
+    #[test]
+    fn test_with_access_token_appends() {
+        // dlink 不带 access_token(正常情况,filemetas 返回的 dlink 无 token)
+        let dlink = "https://d.pcs.baidu.com/file/abc?fid=1&sign=xx";
+        let url = YunApi::with_access_token(dlink, "tok123");
+        assert_eq!(url, format!("{dlink}&access_token=tok123"));
+    }
+
+    #[test]
+    fn test_with_access_token_no_duplicate() {
+        // dlink 已带 access_token 时不重复追加(调用方自行拼接过的场景)
+        let dlink = "https://d.pcs.baidu.com/file/abc?fid=1&access_token=already";
+        let url = YunApi::with_access_token(dlink, "tok123");
+        assert_eq!(url, dlink);
     }
 
     #[test]

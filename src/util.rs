@@ -265,6 +265,12 @@ use std::io::Write;
 ///recieve data total 161 MB
 ///finish download.
 ///```
+///# 已废弃
+///
+/// 请使用 [crate::YunApi::download](crate::YunApi::download)(token 内部持有,流式落盘,零 panic)
+/// 或 [YunFs::download](YunFs::download)(YunFs 内直接按文件名下载)。
+/// 本函数保留仅为 0.3.x 兼容,存在 panic 风险与追加写入问题。
+#[deprecated(note = "请使用 YunApi::download / YunFs::download(见 docs/refactor-download.md)")]
 pub fn download(url: &str, dst: &str, block_size: i32, access_token: &str, is_debug: bool) {
     let mut has_downloaded: i64 = 0;
     let size: i32 = 1024 * 1024 * block_size; //每个range1MB大小,100MB

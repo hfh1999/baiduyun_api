@@ -577,3 +577,63 @@ fn test_files_dlink_vec_real() {
     }
     println!("got {} dlinks", links.len());
 }
+
+#[test]
+#[ignore]
+fn test_download_roundtrip() {
+    // 全库下载链路唯一闭环测试(补盲区):
+    // 上传内容已知文件 -> 取 dlink -> download 流式落盘 -> 读回逐字节一致 -> 自清理
+    let Some(key) = load_key() else {
+        println!("skip: no BAIDU_ACCESS_TOKEN in env or .env file");
+        return;
+    };
+    let Some(app_name) = load_app_name() else {
+        println!("skip: 缺少 BAIDU_APP_NAME(上传路径需位于 /apps/{{应用名}}/ 下)");
+        return;
+    };
+    let api = YunApi::new(&key);
+    let remote = temp_path("yunfs_down");
+    let file_name = remote.rsplit('/').next().unwrap().to_string();
+    let local_src = std::env::temp_dir().join(format!("baiduyun_down_src_{}.txt", std::process::id()));
+    let local_dst = std::env::temp_dir().join(format!("baiduyun_down_dst_{}.txt", std::process::id()));
+
+    // 内容已知的上传载体
+    let content: Vec<u8> = (0..=255).map(|i| i as u8).collect::<Vec<_>>()
+        .repeat(64); // 256B * 64 = 16KB,覆盖全部字节值
+    std::fs::write(&local_src, &content).expect("写本地临时文件应成功");
+
+    // 上传 -> 定位 -> 取链 -> 下载
+    api.upload(local_src.to_str().unwrap(), &remote, OnDup::Fail)
+        .expect("上传应成功");
+    let parent_dir = format!("/apps/{app_name}");
+    let list = api
+        .get_files_list(&parent_dir, 0, 1000)
+        .expect("列表应成功")
+        .collect::<Vec<_>>();
+    let file = list
+        .iter()
+        .find(|f| f.server_filename == file_name)
+        .expect("上传后应能在父目录找到该文件");
+    let dlink = api.get_file_dlink(file).expect("取链应成功");
+    assert!(dlink.starts_with("http"), "dlink 应以 http 开头");
+
+    let bytes = api
+        .download(&dlink, local_dst.to_str().unwrap())
+        .expect("download 应成功");
+    assert_eq!(
+        bytes as usize,
+        content.len(),
+        "download 返回字节数应与上传内容一致"
+    );
+    let downloaded = std::fs::read(&local_dst).expect("读回下载文件应成功");
+    assert_eq!(
+        downloaded, content,
+        "下载内容应与上传内容逐字节一致(含全字节值 0x00-0xFF)"
+    );
+    println!("download roundtrip ok: {} bytes 逐字节一致", bytes);
+
+    // 清理: 远端文件 + 两个本地临时文件
+    api.remove(&[remote]).expect("清理远端文件应成功");
+    std::fs::remove_file(&local_src).ok();
+    std::fs::remove_file(&local_dst).ok();
+}
