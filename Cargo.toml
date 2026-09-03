@@ -9,7 +9,7 @@ version = "0.3.1"
 rust-version = "1.85"
 repository = "https://github.com/hfh1999/baiduyun_api"
 edition = "2021"
-keywords = ["baiduyun", "api"]
+keywords = ["baiduyun", "baidu", "netdisk", "baidupan", "pcs"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
