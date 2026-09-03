@@ -21,6 +21,10 @@ default = []
 large-tests = []
 
 [dependencies]
+# ureq 精确锁 =3.4.0:multipart 位于 unversioned 区(官方不承诺 semver),是 2GB 上传
+# known-size 的唯一通道(实测 2026-09:手写 multipart 只能 chunked,200MB 被百度连接重置;
+# ureq 发送层无 known-size 流式公开接口)。影响面:3.4.0 当前为最新版,冲突面≈0。
+# 升级触发器:ureq 发布新版 / 用户报告版本冲突——届时评估 ~3.4 或升级(须过 24 个网络测试)
 ureq = { version = "=3.4.0", features = ["multipart"] }
 serde_json = "1.0.64"
 serde = {version = "1.0.193", features = ["derive"]}
