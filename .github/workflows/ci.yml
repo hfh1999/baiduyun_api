@@ -27,16 +27,12 @@ jobs:
         run: cargo test
 
   # MSRV 防漂移:用声明的 rust-version 编译测试——哪天悄悄用了更新的特性,这里必红
-  # MSRV 防漂移:用声明的 rust-version 编译测试——哪天悄悄用了更新的特性,这里必红
-  # 注:无 Cargo.lock 时 1.71.1 会解析到最新依赖(zeroize 1.9 已转 edition 2024,需 rustc 1.85),
-  # 故显式降级到 MSRV 兼容版本(生态 msrv CI 的现实维护模式)
+  # MSRV 防漂移:用声明的 rust-version(1.85)编译测试——哪天悄悄用了更新的特性,这里必红
   msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.71.1
+      - uses: dtolnay/rust-toolchain@1.85
       - uses: Swatinem/rust-cache@v2
-      - name: 降级 MSRV 不兼容的传递依赖
-        run: cargo update -p zeroize --precise 1.8.2
       - name: MSRV 编译与离线测试
         run: cargo test
